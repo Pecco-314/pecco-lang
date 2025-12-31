@@ -132,7 +132,7 @@ TEST(LexerTest, NumbersRichVariants) {
 }
 
 TEST(LexerTest, OperatorCombinationsSeparatedBySpaces) {
-  Lexer lexer("a == b != c <= d >= e && f || g + - * / % ^ & | << >> :: ?: ");
+  Lexer lexer("a == b != c <= d >= e && f || g + - * / % ^ & | << >> ");
   auto tokens = lexer.tokenize_all();
   expect_sequence(tokens,
                   {
@@ -147,8 +147,7 @@ TEST(LexerTest, OperatorCombinationsSeparatedBySpaces) {
                       {TokenKind::Operator, "/"},   {TokenKind::Operator, "%"},
                       {TokenKind::Operator, "^"},   {TokenKind::Operator, "&"},
                       {TokenKind::Operator, "|"},   {TokenKind::Operator, "<<"},
-                      {TokenKind::Operator, ">>"},  {TokenKind::Operator, "::"},
-                      {TokenKind::Operator, "?:"},
+                      {TokenKind::Operator, ">>"},
                   });
 }
 

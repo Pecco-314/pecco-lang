@@ -9,8 +9,8 @@
 namespace pecco {
 namespace {
 
-constexpr std::string_view kOperatorChars = "+-*/%=&|^!<>?:.";
-constexpr std::string_view kPunctuationChars = "(){}[],;#";
+constexpr std::string_view kOperatorChars = "+-*/%=&|^!<>?.";
+constexpr std::string_view kPunctuationChars = "(){}[],;:#";
 
 constexpr std::array<std::string_view, 8> kKeywords = {
     "let", "func", "if", "else", "return", "while", "true", "false",
