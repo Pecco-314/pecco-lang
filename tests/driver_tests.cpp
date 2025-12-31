@@ -35,16 +35,13 @@ TEST(PlcDriverTest, LexSampleFile) {
       std::string(PLC_BINARY) + " --lex " + TEST_FIXTURES_DIR + "/sample.pl";
   std::string output = runCommand(cmd);
 
-  EXPECT_TRUE(output.find("[Keyword] 'let'") != std::string::npos);
-  EXPECT_TRUE(output.find("[Identifier] 'x'") != std::string::npos);
-  EXPECT_TRUE(output.find("[Integer] '42'") != std::string::npos);
-  EXPECT_TRUE(output.find("[Punctuation] ';'") != std::string::npos);
-  EXPECT_TRUE(output.find("[String] 'hello") != std::string::npos);
   EXPECT_TRUE(output.find("[Keyword] 'func'") != std::string::npos);
+  EXPECT_TRUE(output.find("[Identifier] 'add'") != std::string::npos);
   EXPECT_TRUE(output.find("[Identifier] 'i32'") != std::string::npos);
   EXPECT_TRUE(output.find("[Punctuation] ':'") != std::string::npos);
   EXPECT_TRUE(output.find("[Keyword] 'return'") != std::string::npos);
-  EXPECT_TRUE(output.find("[Comment]") != std::string::npos);
+  EXPECT_TRUE(output.find("[Operator] '+'") != std::string::npos);
+  EXPECT_TRUE(output.find("[Punctuation] ';'") != std::string::npos);
   EXPECT_TRUE(output.find("[EndOfFile]") != std::string::npos);
 }
 
@@ -72,6 +69,40 @@ TEST(PlcDriverTest, HelpMessage) {
               std::string::npos);
   EXPECT_TRUE(output.find("--lex") != std::string::npos);
   EXPECT_TRUE(output.find("Run lexer and output tokens") != std::string::npos);
+  EXPECT_TRUE(output.find("--parse") != std::string::npos);
+  EXPECT_TRUE(output.find("Run parser and output AST") != std::string::npos);
+}
+
+TEST(PlcDriverTest, ParseSampleFile) {
+  std::string cmd =
+      std::string(PLC_BINARY) + " --parse " + TEST_FIXTURES_DIR + "/sample.pl";
+  std::string output = runCommand(cmd);
+
+  EXPECT_TRUE(output.find("AST:") != std::string::npos);
+  EXPECT_TRUE(output.find("Func(add") != std::string::npos);
+  EXPECT_TRUE(output.find("Return(") != std::string::npos);
+}
+
+TEST(PlcDriverTest, LexerErrorReporting) {
+  std::string cmd =
+      std::string(PLC_BINARY) + " --lex " + TEST_FIXTURES_DIR + "/lex_error.pl";
+  std::string output = runCommand(cmd);
+
+  EXPECT_TRUE(output.find("lexer error") != std::string::npos);
+  EXPECT_TRUE(output.find("lex_error.pl") != std::string::npos);
+  // Should show line and column
+  EXPECT_TRUE(output.find(":") != std::string::npos);
+}
+
+TEST(PlcDriverTest, ParserErrorReporting) {
+  std::string cmd = std::string(PLC_BINARY) + " --parse " + TEST_FIXTURES_DIR +
+                    "/parse_error.pl";
+  std::string output = runCommand(cmd);
+
+  EXPECT_TRUE(output.find("parse error") != std::string::npos);
+  EXPECT_TRUE(output.find("parse_error.pl") != std::string::npos);
+  // Should show error location
+  EXPECT_TRUE(output.find(":") != std::string::npos);
 }
 
 } // namespace

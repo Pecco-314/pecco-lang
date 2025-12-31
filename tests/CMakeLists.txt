@@ -24,6 +24,20 @@ if (BUILD_TESTING)
 	include(GoogleTest)
 	gtest_discover_tests(pecco_lexer_tests)
 
+	add_executable(pecco_parser_tests
+		${CMAKE_CURRENT_SOURCE_DIR}/parser_tests.cpp
+	)
+
+	target_link_libraries(pecco_parser_tests
+		PRIVATE
+			pecco_lib
+			GTest::gtest_main
+	)
+
+	target_compile_features(pecco_parser_tests PRIVATE cxx_std_20)
+
+	gtest_discover_tests(pecco_parser_tests)
+
 	add_executable(pecco_driver_tests
 		${CMAKE_CURRENT_SOURCE_DIR}/driver_tests.cpp
 	)

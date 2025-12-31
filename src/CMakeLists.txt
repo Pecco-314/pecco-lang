@@ -3,6 +3,7 @@ add_library(pecco_lib STATIC)
 target_sources(pecco_lib
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/lexer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/parser.cpp
 )
 
 target_compile_features(pecco_lib PUBLIC cxx_std_20)

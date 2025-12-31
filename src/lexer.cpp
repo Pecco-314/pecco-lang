@@ -44,7 +44,8 @@ bool is_whitespace(char c) {
   }
 }
 
-std::optional<std::string> decode_string(std::string_view view) {
+std::optional<std::string>
+decode_string_with_error_pos(std::string_view view, std::size_t &error_pos) {
   std::string out;
   out.reserve(view.size());
 
@@ -56,6 +57,7 @@ std::optional<std::string> decode_string(std::string_view view) {
     }
 
     if (i + 1 >= view.size()) {
+      error_pos = i;
       return std::nullopt;
     }
 
@@ -85,6 +87,7 @@ std::optional<std::string> decode_string(std::string_view view) {
       out.push_back('\0');
       break;
     default:
+      error_pos = i - 1; // Position of backslash
       return std::nullopt;
     }
   }
@@ -92,8 +95,21 @@ std::optional<std::string> decode_string(std::string_view view) {
   return out;
 }
 
-Token make_error(std::string message, std::size_t line, std::size_t column) {
-  return Token{TokenKind::Error, std::move(message), line, column};
+std::optional<std::string> decode_string(std::string_view view) {
+  std::size_t dummy = 0;
+  return decode_string_with_error_pos(view, dummy);
+}
+
+Token make_error(std::string message, std::size_t line, std::size_t column,
+                 std::size_t end_column, std::size_t error_offset) {
+  Token tok;
+  tok.kind = TokenKind::Error;
+  tok.lexeme = std::move(message);
+  tok.line = line;
+  tok.column = column;
+  tok.end_column = (end_column == 0) ? column + 1 : end_column;
+  tok.error_offset = error_offset;
+  return tok;
 }
 
 const char *to_string_impl(TokenKind kind) {
@@ -162,7 +178,8 @@ Token Lexer::next_token() {
   std::size_t start_column = column_;
   std::string msg(1, c);
   advance();
-  return make_error("Unexpected character: " + msg, start_line, start_column);
+  return make_error("Unexpected character: " + msg, start_line, start_column,
+                    column_, 0);
 }
 
 std::vector<Token> Lexer::tokenize_all() {
@@ -221,13 +238,13 @@ Token Lexer::lex_number() {
   std::string_view number_view =
       std::string_view(source_).substr(start_index, index_ - start_index);
 
-  if (saw_dot || saw_exponent) {
-    return Token{TokenKind::Float, std::string(number_view), start_line,
-                 start_column};
-  }
-
-  return Token{TokenKind::Integer, std::string(number_view), start_line,
-               start_column};
+  Token tok;
+  tok.kind = (saw_dot || saw_exponent) ? TokenKind::Float : TokenKind::Integer;
+  tok.lexeme = std::string(number_view);
+  tok.line = start_line;
+  tok.column = start_column;
+  tok.end_column = column_;
+  return tok;
 }
 
 Token Lexer::lex_identifier_or_keyword() {
@@ -244,8 +261,13 @@ Token Lexer::lex_identifier_or_keyword() {
       std::string_view(source_).substr(start_index, index_ - start_index);
   bool is_keyword =
       std::find(kKeywords.begin(), kKeywords.end(), view) != kKeywords.end();
-  return Token{is_keyword ? TokenKind::Keyword : TokenKind::Identifier,
-               std::string(view), start_line, start_column};
+  Token tok;
+  tok.kind = is_keyword ? TokenKind::Keyword : TokenKind::Identifier;
+  tok.lexeme = std::string(view);
+  tok.line = start_line;
+  tok.column = start_column;
+  tok.end_column = column_;
+  return tok;
 }
 
 Token Lexer::lex_string() {
@@ -272,26 +294,37 @@ Token Lexer::lex_string() {
       break;
     }
     if (c == '\n' && !escaped) {
-      return make_error("Unterminated string literal", start_line,
-                        start_column);
+      return make_error("Unterminated string literal", start_line, start_column,
+                        column_, 0);
     }
   }
 
   if (!terminated) {
-    return make_error("Unterminated string literal", start_line, start_column);
+    return make_error("Unterminated string literal", start_line, start_column,
+                      column_, 0);
   }
 
   std::size_t content_end =
       index_ - 1; // exclude closing quote already consumed
   std::string_view raw_content = std::string_view(source_).substr(
       content_start, content_end - content_start);
-  auto decoded = decode_string(raw_content);
+
+  // Try to decode and find error position
+  std::size_t error_pos = 0;
+  auto decoded = decode_string_with_error_pos(raw_content, error_pos);
   if (!decoded.has_value()) {
-    return make_error("Invalid string escape", start_line, start_column);
+    // error_pos is relative to content_start, add 1 for opening quote
+    return make_error("Invalid string escape", start_line, start_column,
+                      column_, error_pos + 1);
   }
 
-  return Token{TokenKind::String, std::move(*decoded), start_line,
-               start_column};
+  Token tok;
+  tok.kind = TokenKind::String;
+  tok.lexeme = std::move(*decoded);
+  tok.line = start_line;
+  tok.column = start_column;
+  tok.end_column = column_;
+  return tok;
 }
 
 Token Lexer::lex_operator() {
@@ -305,8 +338,13 @@ Token Lexer::lex_operator() {
 
   std::string_view view =
       std::string_view(source_).substr(start_index, index_ - start_index);
-  return Token{TokenKind::Operator, std::string(view), start_line,
-               start_column};
+  Token tok;
+  tok.kind = TokenKind::Operator;
+  tok.lexeme = std::string(view);
+  tok.line = start_line;
+  tok.column = start_column;
+  tok.end_column = column_;
+  return tok;
 }
 
 Token Lexer::lex_punctuation_or_comment() {
@@ -324,13 +362,22 @@ Token Lexer::lex_punctuation_or_comment() {
     if (!at_end() && peek() == '\n') {
       advance(); // consume newline to move to the next line
     }
-    return Token{TokenKind::Comment, std::string(view), start_line,
-                 start_column};
+    Token tok;
+    tok.kind = TokenKind::Comment;
+    tok.lexeme = std::string(view);
+    tok.line = start_line;
+    tok.column = start_column;
+    tok.end_column = column_;
+    return tok;
   }
 
-  std::string lexeme(1, c);
-  return Token{TokenKind::Punctuation, std::move(lexeme), start_line,
-               start_column};
+  Token tok;
+  tok.kind = TokenKind::Punctuation;
+  tok.lexeme = std::string(1, c);
+  tok.line = start_line;
+  tok.column = start_column;
+  tok.end_column = column_;
+  return tok;
 }
 
 void Lexer::skip_whitespace() {
