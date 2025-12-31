@@ -15,7 +15,9 @@ enum class ExprKind {
   StringLiteral,  // 字符串字面量
   BoolLiteral,    // 布尔字面量
   Identifier,     // 标识符
-  OperatorSeq,    // 运算符序列
+  Binary,         // 二元运算（语义分析后）
+  Unary,          // 一元运算（语义分析后）
+  OperatorSeq,    // 运算符序列（语法分析后）
   Call,           // 函数调用
 };
 ```
@@ -24,19 +26,20 @@ enum class ExprKind {
 
 ```cpp
 enum class StmtKind {
-  Let,      // 变量声明
-  Func,     // 函数定义
-  If,       // if 语句
-  Return,   // return 语句
-  While,    // while 循环
-  Expr,     // 表达式语句
-  Block,    // 代码块
+  Let,           // 变量声明
+  Func,          // 函数定义/声明
+  OperatorDecl,  // 运算符声明
+  If,            // if 语句
+  Return,        // return 语句
+  While,         // while 循环
+  Expr,          // 表达式语句
+  Block,         // 代码块
 };
 ```
 
 ## 支持的语法结构
 
-### 变量声明（Let Statement）
+### 变量声明
 
 ```
 let <name> [: <type>] = <expr>;
@@ -50,23 +53,77 @@ let <name> [: <type>] = <expr>;
   let name : str = "hello";
   ```
 
-### 函数定义（Func Statement）
+### 函数定义/声明
 
+**函数定义**：
 ```
 func <name>([<param> [: <type>], ...]) [: <return_type>] {
   <statements>
 }
 ```
 
+**函数声明**（无函数体）：
+```
+func <name>([<param> [: <type>], ...]) [: <return_type>];
+```
+
 - 参数可选类型注解
 - 可选返回类型注解
+- 支持无函数体的声明（用于外部函数）
 - 示例：
   ```
   func add(a, b) { return a + b; }
   func multiply(x : i32, y : i32) : i32 { return x * y; }
+  func write(fd: i32, buf: string, count: i32) : i32;  // 声明
   ```
 
-### 条件语句（If Statement）
+### 运算符声明
+
+**前缀运算符**：
+```
+operator prefix <op>(<param> : <type>) : <return_type>;
+```
+
+**中缀运算符**：
+```
+operator infix <op>(<left> : <type>, <right> : <type>) : <return_type>
+  prec <precedence> assoc <associativity>;
+```
+
+**后缀运算符**：
+```
+operator postfix <op>(<param> : <type>) : <return_type>;
+```
+
+**参数**：
+- `<op>`：运算符符号（如 `+`, `-`, `*`, `**` 等）
+- `prec`：优先级（整数，越大越高）
+- `assoc`：结合性（`left`、`right`、`none`）
+
+**示例**：
+```
+// 算术运算符
+operator infix +(a: i32, b: i32) : i32 prec 70 assoc left;
+operator infix *(a: i32, b: i32) : i32 prec 80 assoc left;
+operator infix **(a: i32, b: i32) : i32 prec 90 assoc right;
+
+// 一元运算符
+operator prefix -(a: i32) : i32;
+operator prefix !(a: bool) : bool;
+
+// 比较运算符（不可结合）
+operator infix ==(a: i32, b: i32) : bool prec 55 assoc none;
+```
+
+**运算符重载**：
+- 同一个运算符可以有多个声明（不同的参数类型）
+- 示例：
+  ```
+  operator infix +(a: i32, b: i32) : i32 prec 70 assoc left;
+  operator infix +(a: f64, b: f64) : f64 prec 70 assoc left;
+  ```
+
+### 条件语句
 
 ```
 if <condition> {
@@ -84,7 +141,7 @@ if <condition> {
 }
 ```
 
-### 循环语句（While Statement）
+### 循环语句
 
 ```
 while <condition> {
@@ -92,7 +149,7 @@ while <condition> {
 }
 ```
 
-### 返回语句（Return Statement）
+### 返回语句
 
 ```
 return [<expr>];
@@ -100,7 +157,7 @@ return [<expr>];
 
 - 表达式可选
 
-### 代码块（Block Statement）
+### 代码块
 
 ```
 {
@@ -112,7 +169,7 @@ return [<expr>];
 
 ### 运算符序列
 
-Parser 不进行运算符优先级解析，而是将表达式解析为平面序列。
+Parser 不进行运算符优先级解析，而是将表达式解析为**平面序列**。
 
 ```
 a + b * c  ->  OperatorSeq([a, b, c], ["+", "*"])
@@ -123,7 +180,7 @@ a + b * c  ->  OperatorSeq([a, b, c], ["+", "*"])
 - 动态运算符定义
 - 在语义分析阶段处理优先级
 
-### 主表达式（Primary Expression）
+### 主表达式
 
 支持的主表达式类型：
 - **字面量**：整数、浮点数、字符串、布尔值（`true`/`false`）

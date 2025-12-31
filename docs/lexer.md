@@ -57,7 +57,9 @@ enum class TokenKind {
   - 后续字符：字母、数字或下划线 `[a-zA-Z0-9_]`
 - **关键字列表**（当前版本）：
   ```
-  "let", "func", "if", "else", "return", "while", "true", "false"
+  "let", "func", "operator", "if", "else", "return", "while",
+  "true", "false", "prefix", "infix", "postfix", "prec", "assoc",
+  "left", "right", "none"
   ```
 - **关键字识别**：扫描完标识符后在关键字表中查找，匹配则标记为 `Keyword`，否则为 `Identifier`
 

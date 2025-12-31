@@ -4,6 +4,9 @@ target_sources(pecco_lib
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/lexer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/parser.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/operator.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/symbol_table.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/semantic.cpp
 )
 
 target_compile_features(pecco_lib PUBLIC cxx_std_20)
@@ -16,6 +19,11 @@ target_include_directories(pecco_lib PUBLIC
 )
 
 target_compile_definitions(pecco_lib PUBLIC ${LLVM_DEFINITIONS})
+
+# Define STDLIB_DIR for prelude path
+target_compile_definitions(pecco_lib PUBLIC
+  STDLIB_DIR="${CMAKE_SOURCE_DIR}/stdlib"
+)
 
 # plc executable
 add_executable(plc driver.cpp)

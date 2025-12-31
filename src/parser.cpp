@@ -29,6 +29,9 @@ StmtPtr Parser::parse_stmt() {
       return parse_let_stmt();
     } else if (tok.lexeme == "func") {
       return parse_func_stmt();
+    } else if (tok.lexeme == "prefix" || tok.lexeme == "infix" ||
+               tok.lexeme == "postfix") {
+      return parse_operator_decl();
     } else if (tok.lexeme == "if") {
       return parse_if_stmt();
     } else if (tok.lexeme == "return") {
@@ -152,15 +155,195 @@ StmtPtr Parser::parse_func_stmt() {
     }
   }
 
-  // Expect function body (block)
-  auto body = parse_block_stmt();
-  if (!body) {
-    error("Expected function body");
+  // Function body or semicolon
+  std::optional<StmtPtr> body;
+  if (check(TokenKind::Punctuation) && peek().lexeme == "{") {
+    // Function definition with body
+    auto block = parse_block_stmt();
+    if (!block) {
+      error("Expected function body");
+      return nullptr;
+    }
+    body = std::move(block);
+  } else if (check(TokenKind::Punctuation) && peek().lexeme == ";") {
+    // Function declaration without body
+    advance(); // consume ';'
+    // body remains nullopt
+  } else {
+    error("Expected '{' or ';' after function signature");
     return nullptr;
   }
 
   return std::make_unique<FuncStmt>(std::move(name), std::move(params),
                                     std::move(return_type), std::move(body));
+}
+
+StmtPtr Parser::parse_operator_decl() {
+  // Parse position: prefix/infix/postfix
+  std::string position_str = advance().lexeme;
+  OpPosition position;
+  if (position_str == "prefix") {
+    position = OpPosition::Prefix;
+  } else if (position_str == "infix") {
+    position = OpPosition::Infix;
+  } else if (position_str == "postfix") {
+    position = OpPosition::Postfix;
+  } else {
+    error("Expected 'prefix', 'infix', or 'postfix'");
+    return nullptr;
+  }
+
+  // Expect 'operator' keyword
+  if (!check(TokenKind::Keyword) || peek().lexeme != "operator") {
+    error("Expected 'operator' keyword");
+    return nullptr;
+  }
+  advance(); // consume 'operator'
+
+  // Expect operator symbol
+  if (!check(TokenKind::Operator)) {
+    error("Expected operator symbol");
+    return nullptr;
+  }
+  std::string op = advance().lexeme;
+
+  // Expect '('
+  if (!check(TokenKind::Punctuation) || peek().lexeme != "(") {
+    error("Expected '(' after operator symbol");
+    return nullptr;
+  }
+  advance(); // consume '('
+
+  // Parse parameters
+  std::vector<Parameter> params;
+  while (!check(TokenKind::Punctuation) || peek().lexeme != ")") {
+    if (!params.empty()) {
+      if (!check(TokenKind::Punctuation) || peek().lexeme != ",") {
+        error("Expected ',' between parameters");
+        return nullptr;
+      }
+      advance(); // consume ','
+    }
+
+    if (!check(TokenKind::Identifier)) {
+      error("Expected parameter name");
+      return nullptr;
+    }
+    std::string param_name = advance().lexeme;
+
+    // Require type annotation for operators
+    if (!check(TokenKind::Punctuation) || peek().lexeme != ":") {
+      error("Expected ':' after parameter name (type required for operators)");
+      return nullptr;
+    }
+    advance(); // consume ':'
+
+    auto param_type = parse_type_annotation();
+    if (!param_type) {
+      error("Expected type after ':'");
+      return nullptr;
+    }
+
+    params.emplace_back(std::move(param_name), std::move(param_type));
+  }
+
+  // Validate parameter count based on position
+  if (position == OpPosition::Prefix && params.size() != 1) {
+    error("Prefix operator must have exactly 1 parameter");
+    return nullptr;
+  }
+  if (position == OpPosition::Infix && params.size() != 2) {
+    error("Infix operator must have exactly 2 parameters");
+    return nullptr;
+  }
+  if (position == OpPosition::Postfix && params.size() != 1) {
+    error("Postfix operator must have exactly 1 parameter");
+    return nullptr;
+  }
+
+  if (!check(TokenKind::Punctuation) || peek().lexeme != ")") {
+    error("Expected ')' after parameters");
+    return nullptr;
+  }
+  advance(); // consume ')'
+
+  // Require return type
+  if (!check(TokenKind::Punctuation) || peek().lexeme != ":") {
+    error("Expected ':' after parameters (return type required for operators)");
+    return nullptr;
+  }
+  advance(); // consume ':'
+
+  auto return_type = parse_type_annotation();
+  if (!return_type) {
+    error("Expected return type after ':'");
+    return nullptr;
+  }
+
+  // Parse precedence and associativity for infix operators
+  int precedence = 0;
+  Associativity assoc = Associativity::None;
+
+  if (position == OpPosition::Infix) {
+    // Expect 'prec' keyword
+    if (!check(TokenKind::Keyword) || peek().lexeme != "prec") {
+      error("Expected 'prec' keyword for infix operator");
+      return nullptr;
+    }
+    advance(); // consume 'prec'
+
+    // Expect precedence value (integer)
+    if (!check(TokenKind::Integer)) {
+      error("Expected integer precedence value");
+      return nullptr;
+    }
+    precedence = std::stoi(advance().lexeme);
+
+    // Expect 'assoc' keyword
+    if (!check(TokenKind::Keyword) || peek().lexeme != "assoc") {
+      error("Expected 'assoc' keyword for infix operator");
+      return nullptr;
+    }
+    advance(); // consume 'assoc'
+
+    // Expect associativity: left/right/none
+    if (!check(TokenKind::Keyword)) {
+      error("Expected associativity ('left', 'right', or 'none')");
+      return nullptr;
+    }
+    std::string assoc_str = advance().lexeme;
+    if (assoc_str == "left") {
+      assoc = Associativity::Left;
+    } else if (assoc_str == "right") {
+      assoc = Associativity::Right;
+    } else if (assoc_str == "none") {
+      assoc = Associativity::None;
+    } else {
+      error("Associativity must be 'left', 'right', or 'none'");
+      return nullptr;
+    }
+  }
+
+  // Check for function body or semicolon
+  std::optional<StmtPtr> body;
+  if (check(TokenKind::Punctuation) && peek().lexeme == "{") {
+    // Definition with body
+    body = parse_block_stmt();
+    if (!body) {
+      error("Expected function body");
+      return nullptr;
+    }
+  } else {
+    // Declaration only - expect semicolon
+    if (!expect_token(TokenKind::Punctuation, ";",
+                      "Expected ';' after operator declaration")) {
+      return nullptr;
+    }
+  }
+
+  return std::make_unique<OperatorDeclStmt>(
+      std::move(op), position, std::move(params), std::move(return_type),
+      precedence, assoc, std::move(body));
 }
 
 StmtPtr Parser::parse_if_stmt() {

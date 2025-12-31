@@ -31,6 +31,7 @@ private:
   StmtPtr parse_stmt();
   StmtPtr parse_let_stmt();
   StmtPtr parse_func_stmt();
+  StmtPtr parse_operator_decl(); // Parse operator declaration
   StmtPtr parse_if_stmt();
   StmtPtr parse_return_stmt();
   StmtPtr parse_while_stmt();

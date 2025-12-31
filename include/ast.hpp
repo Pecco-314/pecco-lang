@@ -1,5 +1,6 @@
 #pragma once
 
+#include "operator.hpp"
 #include <memory>
 #include <optional>
 #include <string>
@@ -38,7 +39,9 @@ enum class ExprKind {
   StringLiteral,
   BoolLiteral,
   Identifier,
-  OperatorSeq, // Sequence of operands and operators
+  Binary,      // Binary operation (infix)
+  Unary,       // Unary operation (prefix/postfix)
+  OperatorSeq, // Sequence of operands and operators (not yet resolved)
   Call,
 };
 
@@ -85,6 +88,29 @@ struct IdentifierExpr : public Expr {
       : Expr(ExprKind::Identifier), name(std::move(name)) {}
 };
 
+// Binary operation (infix operators)
+struct BinaryExpr : public Expr {
+  std::string op;      // Operator symbol
+  ExprPtr left;        // Left operand
+  ExprPtr right;       // Right operand
+  OpPosition position; // Always Infix for binary
+
+  BinaryExpr(std::string op, ExprPtr left, ExprPtr right)
+      : Expr(ExprKind::Binary), op(std::move(op)), left(std::move(left)),
+        right(std::move(right)), position(OpPosition::Infix) {}
+};
+
+// Unary operation (prefix/postfix operators)
+struct UnaryExpr : public Expr {
+  std::string op;      // Operator symbol
+  ExprPtr operand;     // Operand
+  OpPosition position; // Prefix or Postfix
+
+  UnaryExpr(std::string op, ExprPtr operand, OpPosition position)
+      : Expr(ExprKind::Unary), op(std::move(op)), operand(std::move(operand)),
+        position(position) {}
+};
+
 // Represents a sequence of operands and operators (no precedence resolution)
 // Example: "a + b * c" -> operands=[a, b, c], operators=["+", "*"]
 struct OperatorSeqExpr : public Expr {
@@ -112,6 +138,7 @@ struct CallExpr : public Expr {
 enum class StmtKind {
   Let,
   Func,
+  OperatorDecl,
   If,
   Return,
   While,
@@ -149,12 +176,30 @@ struct FuncStmt : public Stmt {
   std::string name;
   std::vector<Parameter> params;
   std::optional<TypePtr> return_type;
-  StmtPtr body;
+  std::optional<StmtPtr> body; // Optional body for declarations
 
   FuncStmt(std::string name, std::vector<Parameter> params,
-           std::optional<TypePtr> return_type, StmtPtr body)
+           std::optional<TypePtr> return_type, std::optional<StmtPtr> body)
       : Stmt(StmtKind::Func), name(std::move(name)), params(std::move(params)),
         return_type(std::move(return_type)), body(std::move(body)) {}
+};
+
+struct OperatorDeclStmt : public Stmt {
+  std::string op;                     // Operator symbol
+  OpPosition position;                // Prefix/Infix/Postfix
+  std::vector<Parameter> params;      // Parameters
+  std::optional<TypePtr> return_type; // Return type
+  int precedence;                     // Precedence level
+  Associativity assoc;                // Associativity
+  std::optional<StmtPtr> body;        // Optional body (for definition)
+
+  OperatorDeclStmt(std::string op, OpPosition position,
+                   std::vector<Parameter> params,
+                   std::optional<TypePtr> return_type, int precedence,
+                   Associativity assoc, std::optional<StmtPtr> body)
+      : Stmt(StmtKind::OperatorDecl), op(std::move(op)), position(position),
+        params(std::move(params)), return_type(std::move(return_type)),
+        precedence(precedence), assoc(assoc), body(std::move(body)) {}
 };
 
 struct IfStmt : public Stmt {

@@ -45,12 +45,12 @@ TEST(PlcDriverTest, LexSampleFile) {
   EXPECT_TRUE(output.find("[EndOfFile]") != std::string::npos);
 }
 
-TEST(PlcDriverTest, NoModeSpecified) {
+TEST(PlcDriverTest, DefaultModeCompilation) {
   std::string cmd =
       std::string(PLC_BINARY) + " " + TEST_FIXTURES_DIR + "/sample.pl";
   std::string output = runCommand(cmd);
 
-  EXPECT_TRUE(output.find("no operation mode specified") != std::string::npos);
+  EXPECT_TRUE(output.find("Compilation successful") != std::string::npos);
 }
 
 TEST(PlcDriverTest, FileNotFound) {
@@ -68,9 +68,9 @@ TEST(PlcDriverTest, HelpMessage) {
   EXPECT_TRUE(output.find("OVERVIEW: pecco-lang compiler") !=
               std::string::npos);
   EXPECT_TRUE(output.find("--lex") != std::string::npos);
-  EXPECT_TRUE(output.find("Run lexer and output tokens") != std::string::npos);
   EXPECT_TRUE(output.find("--parse") != std::string::npos);
-  EXPECT_TRUE(output.find("Run parser and output AST") != std::string::npos);
+  EXPECT_TRUE(output.find("--dump-ast") != std::string::npos);
+  EXPECT_TRUE(output.find("--dump-symbols") != std::string::npos);
 }
 
 TEST(PlcDriverTest, ParseSampleFile) {
