@@ -118,8 +118,17 @@ bool CodeGen::generate(std::vector<StmtPtr> &stmts,
       return false;
     }
 
-    // 生成 mangled name 用于区分重载：op_symbol$type1$type2...
+    // 生成 mangled name 用于区分重载：op_symbol$position$type1$type2...
+    // 对于一元 operator，需要加上 position 以区分 prefix 和 postfix
     std::string mangled_name = op_info.op;
+    if (op_info.signature.param_types.size() == 1) {
+      // 一元 operator：添加位置信息
+      if (op_info.position == OpPosition::Prefix) {
+        mangled_name += "$prefix";
+      } else if (op_info.position == OpPosition::Postfix) {
+        mangled_name += "$postfix";
+      }
+    }
     for (const auto &param_type : op_info.signature.param_types) {
       mangled_name += "$" + param_type;
     }
@@ -293,6 +302,14 @@ void CodeGen::gen_func_stmt(FuncStmt *func) {
 void CodeGen::gen_operator_stmt(OperatorDeclStmt *op_decl) {
   // 生成 mangled name（与声明时相同）
   std::string mangled_name = op_decl->op;
+  if (op_decl->params.size() == 1) {
+    // 一元 operator：添加位置信息
+    if (op_decl->position == OpPosition::Prefix) {
+      mangled_name += "$prefix";
+    } else if (op_decl->position == OpPosition::Postfix) {
+      mangled_name += "$postfix";
+    }
+  }
   for (const auto &param : op_decl->params) {
     if (param.type) {
       mangled_name += "$" + param.type.value()->name;
@@ -826,8 +843,14 @@ llvm::Value *CodeGen::gen_unary_expr(UnaryExpr *unary) {
     for (const auto &op_info : ops) {
       if (op_info.signature.param_types.size() == 1 &&
           op_info.signature.param_types[0] == operand_type) {
-        // 构造 mangled name
-        std::string mangled_name = op + "$" + operand_type;
+        // 构造 mangled name（需要包含位置信息）
+        std::string mangled_name = op;
+        if (unary->position == OpPosition::Prefix) {
+          mangled_name += "$prefix";
+        } else if (unary->position == OpPosition::Postfix) {
+          mangled_name += "$postfix";
+        }
+        mangled_name += "$" + operand_type;
         llvm::Function *op_func = module_->getFunction(mangled_name);
         if (op_func) {
           // 找到了 operator 函数
