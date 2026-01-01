@@ -63,6 +63,7 @@ enum class ExprKind {
 struct Expr {
   ExprKind kind;
   SourceLocation loc;
+  std::string inferred_type; // Inferred type (empty if not yet inferred)
 
   virtual ~Expr() = default;
 

@@ -4,6 +4,7 @@
 #include "scope.hpp"
 #include "scope_checker.hpp"
 #include "symbol_table_builder.hpp"
+#include "type_checker.hpp"
 
 #include <llvm/Support/CommandLine.h>
 #include <llvm/Support/FileSystem.h>
@@ -525,9 +526,17 @@ static int runCompile(StringRef filename) {
     return 1;
   }
 
-  // Note: Phase 3 (scope checking) is now integrated into DeclarationCollector
-  // The collector validates variables and reports errors during collection
-  // No separate scope checking phase is needed
+  // Phase 3: Type checking and inference
+  pecco::TypeChecker type_checker;
+  if (!type_checker.check(stmts, scoped_symbols)) {
+    for (const auto &err : type_checker.errors()) {
+      WithColor::error(errs(), "plc")
+          << "type error at " << filename << ":" << err.line << ":"
+          << err.column << ": " << err.message << "\n";
+      printSourceLine(sourceContent, err.line, err.column, 0, 0, errs());
+    }
+    return 1;
+  }
 
   // Output based on flags
   if (DumpAST) {

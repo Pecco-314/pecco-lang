@@ -1,6 +1,6 @@
 # 语义分析
 
-语义分析分为2个阶段：
+语义分析分为 3 个阶段：
 
 ## 阶段 1：符号表构建（SymbolTableBuilder）
 
@@ -121,3 +121,65 @@ operators: [**, **]
     IntLiteral(2),
     Binary(**, IntLiteral(3), IntLiteral(2)))
 ```
+
+## 阶段 3：类型检查（TypeChecker）
+
+推导表达式类型并检查类型兼容性。
+
+**处理流程**：
+
+1. 递归遍历 AST
+2. 推导每个表达式的类型
+3. 检查类型约束
+
+**类型推导规则**：
+
+字面量类型：
+- `IntLiteral` → `i32`
+- `FloatLiteral` → `f64`
+- `StringLiteral` → `string`
+- `BoolLiteral` → `bool`
+
+变量类型：
+- 维护作用域栈跟踪变量类型
+- 从内到外查找变量定义
+- 支持跨作用域类型传播
+
+操作符类型：
+- 查找符号表中匹配的操作符重载
+- 返回操作符的返回类型
+
+函数调用类型：
+- 查找函数签名
+- 返回函数的返回类型
+
+**类型检查规则**：
+
+- Let 语句：声明类型必须与初始化类型匹配
+- If/While：条件表达式必须是 `bool` 类型
+- 变量传播：支持多层嵌套作用域的类型传播
+
+**作用域管理**：
+
+- 每个函数创建新作用域，记录参数类型
+- 每个 Block 创建嵌套作用域
+- 变量类型在作用域内传播
+
+**错误示例**：
+
+```pec
+func test() : i32 {
+  let x = 3.14;
+  let y : i32 = x;  # 错误：类型不匹配 (f64 → i32)
+  return y;
+}
+```
+
+错误信息：
+```
+type error at test.pec:3:17: Type mismatch: variable 'y' declared as 'i32' but initialized with 'f64'
+  3 |   let y : i32 = x;
+    |                 ^
+```
+
+所有类型检查都在编译时完成，无运行时开销。

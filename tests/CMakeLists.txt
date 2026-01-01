@@ -74,6 +74,24 @@ if (BUILD_TESTING)
 
 	gtest_discover_tests(pecco_symbol_table_tests)
 
+	add_executable(pecco_type_checker_tests
+		${CMAKE_CURRENT_SOURCE_DIR}/type_checker_tests.cpp
+	)
+
+	target_link_libraries(pecco_type_checker_tests
+		PRIVATE
+			pecco_lib
+			GTest::gtest_main
+	)
+
+	target_compile_features(pecco_type_checker_tests PRIVATE cxx_std_20)
+
+	target_compile_definitions(pecco_type_checker_tests PRIVATE
+		STDLIB_DIR="${CMAKE_SOURCE_DIR}/stdlib"
+	)
+
+	gtest_discover_tests(pecco_type_checker_tests)
+
 	add_executable(pecco_driver_tests
 		${CMAKE_CURRENT_SOURCE_DIR}/driver_tests.cpp
 	)

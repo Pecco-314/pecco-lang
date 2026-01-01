@@ -11,6 +11,7 @@ target_sources(pecco_lib
     ${CMAKE_CURRENT_SOURCE_DIR}/symbol_table_builder.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/operator_resolver.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/scope_checker.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/type_checker.cpp
 )
 
 target_compile_features(pecco_lib PUBLIC cxx_std_20)
