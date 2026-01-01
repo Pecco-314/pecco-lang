@@ -770,8 +770,8 @@ llvm::Value *CodeGen::gen_binary_expr(BinaryExpr *binary) {
         // 构造 mangled name
         std::string mangled_name = op + "$" + left_type + "$" + right_type;
         llvm::Function *op_func = module_->getFunction(mangled_name);
-        if (op_func && !op_func->empty()) {
-          // 找到了有函数体的 operator
+        if (op_func) {
+          // 找到了 operator 函数
           std::vector<llvm::Value *> args = {left, right};
           return builder_.CreateCall(op_func, args, "optmp");
         }
@@ -829,8 +829,8 @@ llvm::Value *CodeGen::gen_unary_expr(UnaryExpr *unary) {
         // 构造 mangled name
         std::string mangled_name = op + "$" + operand_type;
         llvm::Function *op_func = module_->getFunction(mangled_name);
-        if (op_func && !op_func->empty()) {
-          // 找到了有函数体的 operator
+        if (op_func) {
+          // 找到了 operator 函数
           std::vector<llvm::Value *> args = {operand};
           return builder_.CreateCall(op_func, args, "optmp");
         }
