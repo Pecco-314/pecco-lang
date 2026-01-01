@@ -26,6 +26,10 @@ plc <input.pec> [options]
 - `--hide-prelude` - 隐藏标准库符号（配合 `--dump-symbols`）
 - `-o <file>` - 指定输出文件名
 
+### 优化选项
+
+- `--opt` - 启用 LLVM 优化（O2 级别）
+
 ## 示例
 
 ```bash
@@ -55,6 +59,15 @@ plc sample.pec -o myapp
 # 编译、链接并运行
 plc sample.pec --run
 # 运行后退出
+
+# 优化编译
+plc sample.pec --opt
+
+# 查看优化后的 IR
+plc sample.pec --opt --emit-llvm
+
+# 优化并运行
+plc sample.pec --opt --run
 ```
 
 ## 编译流程
@@ -71,6 +84,8 @@ Token 流
 优先级树 AST
     ↓ 代码生成
 LLVM IR
+    ↓ 优化（可选）
+优化后的 IR
     ↓ LLVM 编译
 目标文件 (.o)
     ↓ 链接 (cc)

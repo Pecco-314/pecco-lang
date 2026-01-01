@@ -33,7 +33,7 @@ target_compile_definitions(pecco_lib PUBLIC
 
 llvm_map_components_to_libnames(llvm_libs support core irreader
   X86AsmParser X86Desc X86Info X86CodeGen
-  MC MCParser Target Analysis)
+  MC MCParser Target Analysis Passes TransformUtils ScalarOpts InstCombine)
 
 target_link_libraries(pecco_lib PUBLIC ${llvm_libs})
 

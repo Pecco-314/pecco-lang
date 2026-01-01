@@ -1,0 +1,7 @@
+func add_constant(x: i32) : i32 {
+    let a = x + 1;
+    let b = a + 1;
+    return b + 1;
+}
+
+exit(add_constant(5));

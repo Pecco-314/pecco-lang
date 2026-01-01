@@ -244,6 +244,65 @@ TEST(PlcDriverTest, CompileOnlyMode) {
   std::remove(obj_file.c_str());
 }
 
+TEST(PlcDriverTest, OptimizationFlag) {
+  // Test --opt with --emit-llvm
+  std::string cmd = std::string(PLC_BINARY) + " " + TEST_FIXTURES_DIR +
+                    "/opt_test.pec --opt --emit-llvm";
+  std::string output = runCommand(cmd);
+
+  // Optimized version should simplify add_constant to a single add
+  // add_constant(x) should become: add i32 %0, 3
+  EXPECT_TRUE(output.find("add i32 %0, 3") != std::string::npos);
+
+  // Should NOT have multiple alloca/load/store for intermediate variables
+  // Count alloca instructions in add_constant - optimized should have 0 or 1
+  size_t alloca_pos = 0;
+  int alloca_count = 0;
+  while ((alloca_pos = output.find("alloca", alloca_pos)) !=
+         std::string::npos) {
+    // Make sure it's within add_constant function
+    size_t func_start = output.rfind("define i32 @add_constant", alloca_pos);
+    size_t func_end = output.find("}", alloca_pos);
+    size_t next_func = output.find("define", alloca_pos + 1);
+
+    if (func_start != std::string::npos &&
+        (next_func == std::string::npos || func_end < next_func)) {
+      alloca_count++;
+    }
+    alloca_pos++;
+  }
+
+  // Optimized code should have very few allocas in add_constant
+  EXPECT_LE(alloca_count, 1);
+}
+
+TEST(PlcDriverTest, OptimizationWithRun) {
+  // Test that --opt with --run produces correct result
+  std::string cmd = std::string(PLC_BINARY) + " " + TEST_FIXTURES_DIR +
+                    "/opt_test.pec --opt --run";
+
+  int exit_code = system(cmd.c_str());
+  int actual_exit = WEXITSTATUS(exit_code);
+
+  // add_constant(5) = 5 + 1 + 1 + 1 = 8
+  EXPECT_EQ(actual_exit, 8);
+}
+
+TEST(PlcDriverTest, OptimizationConsistency) {
+  // Verify optimized and unoptimized produce same result
+  std::string cmd_unopt =
+      std::string(PLC_BINARY) + " " + TEST_FIXTURES_DIR + "/opt_test.pec --run";
+  std::string cmd_opt = std::string(PLC_BINARY) + " " + TEST_FIXTURES_DIR +
+                        "/opt_test.pec --opt --run";
+
+  int exit_unopt = WEXITSTATUS(system(cmd_unopt.c_str()));
+  int exit_opt = WEXITSTATUS(system(cmd_opt.c_str()));
+
+  // Both should produce the same result
+  EXPECT_EQ(exit_unopt, exit_opt);
+  EXPECT_EQ(exit_unopt, 8);
+}
+
 } // namespace
 
 int main(int argc, char **argv) {

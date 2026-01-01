@@ -8,7 +8,9 @@
 #include "type_checker.hpp"
 
 #include <llvm/IR/LegacyPassManager.h>
+#include <llvm/IR/Verifier.h>
 #include <llvm/MC/TargetRegistry.h>
+#include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/CommandLine.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/MemoryBuffer.h>
@@ -19,6 +21,10 @@
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Target/TargetOptions.h>
 #include <llvm/TargetParser/Host.h>
+#include <llvm/Transforms/InstCombine/InstCombine.h>
+#include <llvm/Transforms/Scalar.h>
+#include <llvm/Transforms/Scalar/GVN.h>
+#include <llvm/Transforms/Utils.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -58,6 +64,8 @@ static cl::opt<bool>
 
 static cl::opt<bool>
     RunAfterCompile("run", cl::desc("Compile, link, and run the program"));
+
+static cl::opt<bool> OptimizeCode("opt", cl::desc("Enable LLVM optimizations"));
 
 static cl::opt<std::string> OutputFilename("o", cl::desc("Output filename"),
                                            cl::value_desc("filename"));
@@ -109,6 +117,29 @@ static void printSourceLine(StringRef source, size_t line, size_t column,
   }
 
   os << "\n";
+}
+
+static void optimizeModule(llvm::Module *module) {
+  // 创建分析管理器
+  llvm::LoopAnalysisManager LAM;
+  llvm::FunctionAnalysisManager FAM;
+  llvm::CGSCCAnalysisManager CGAM;
+  llvm::ModuleAnalysisManager MAM;
+
+  // 创建 PassBuilder 并注册分析
+  llvm::PassBuilder PB;
+  PB.registerModuleAnalyses(MAM);
+  PB.registerCGSCCAnalyses(CGAM);
+  PB.registerFunctionAnalyses(FAM);
+  PB.registerLoopAnalyses(LAM);
+  PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+
+  // 创建优化 pipeline (O2 级别)
+  llvm::ModulePassManager MPM =
+      PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
+
+  // 运行优化
+  MPM.run(*module, MAM);
 }
 
 static int compileToObject(llvm::Module *module, StringRef output_file) {
@@ -667,6 +698,11 @@ static int runCompile(StringRef filename) {
         printSourceLine(sourceContent, err.line, err.column, 0, 0, errs());
       }
       return 1;
+    }
+
+    // 优化 IR（如果启用了 --opt）
+    if (OptimizeCode) {
+      optimizeModule(codegen.get_module());
     }
 
     // 只输出 LLVM IR
