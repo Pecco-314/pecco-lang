@@ -1067,6 +1067,128 @@ TEST(CodeGenTest, ChainedAssignment) {
   EXPECT_TRUE(irContains(ir, "store i32 42"));
 }
 
+// ===== User-Defined Operators =====
+
+TEST(CodeGenTest, UserDefinedIntegerPower) {
+  std::string source = R"(
+    operator infix **(a: i32, n: i32) : i32 prec 90 assoc_right {
+      let ans = 1;
+      let base = a;
+      let exp = n;
+      while exp != 0 {
+        if exp % 2 == 1 {
+          ans *= base;
+        }
+        base *= base;
+        exp /= 2;
+      }
+      return ans;
+    }
+    let result = 3 ** 4;
+  )";
+  std::string ir = compileToIR(source);
+
+  ASSERT_FALSE(ir.empty());
+  // 检查 operator 函数被定义（使用 mangled name）
+  EXPECT_TRUE(irContains(ir, "define i32 @\"**$i32$i32\""));
+  // 检查 operator 被调用
+  EXPECT_TRUE(irContains(ir, "call i32 @\"**$i32$i32\""));
+}
+
+TEST(CodeGenTest, UserDefinedUnaryOperator) {
+  std::string source = R"(
+    operator prefix +(x: i32) : i32 {
+      return x * 2;
+    }
+    let result = +5;
+  )";
+  std::string ir = compileToIR(source);
+
+  ASSERT_FALSE(ir.empty());
+  // 检查 operator 函数被定义
+  EXPECT_TRUE(irContains(ir, "define i32 @\"+$i32\""));
+  // 检查 operator 被调用
+  EXPECT_TRUE(irContains(ir, "call i32 @\"+$i32\""));
+}
+
+TEST(CodeGenTest, UserDefinedOperatorWithMultipleParameters) {
+  std::string source = R"(
+    operator infix %%(a: i32, b: i32) : i32 prec 80 assoc_left {
+      return a % b;
+    }
+    let result = 17 %% 5;
+  )";
+  std::string ir = compileToIR(source);
+
+  ASSERT_FALSE(ir.empty());
+  // 检查 operator 函数被定义
+  EXPECT_TRUE(irContains(ir, "define i32 @\"%%$i32$i32\""));
+  // 检查 operator 被调用
+  EXPECT_TRUE(irContains(ir, "call i32 @\"%%$i32$i32\""));
+}
+
+TEST(CodeGenTest, OperatorOverloadingByType) {
+  std::string source = R"(
+    operator infix ***(a: i32, b: i32) : i32 prec 85 assoc_left {
+      return a * b * b;
+    }
+    operator infix ***(a: f64, b: f64) : f64 prec 85 assoc_left {
+      return a * b * b;
+    }
+    let int_result = 3 *** 4;
+    let float_result = 2.0 *** 3.0;
+  )";
+  std::string ir = compileToIR(source);
+
+  ASSERT_FALSE(ir.empty());
+  // 检查两个重载都被定义
+  EXPECT_TRUE(irContains(ir, "define i32 @\"***$i32$i32\""));
+  EXPECT_TRUE(irContains(ir, "define double @\"***$f64$f64\""));
+  // 检查两个重载都被调用
+  EXPECT_TRUE(irContains(ir, "call i32 @\"***$i32$i32\""));
+  EXPECT_TRUE(irContains(ir, "call double @\"***$f64$f64\""));
+}
+
+TEST(CodeGenTest, UserDefinedOperatorCallsOtherOperator) {
+  std::string source = R"(
+    operator infix ^^(a: i32, b: i32) : i32 prec 90 assoc_right {
+      let result = 1;
+      let i = 0;
+      while i < b {
+        result *= a;
+        i += 1;
+      }
+      return result;
+    }
+    let result = 2 ^^ 5;
+  )";
+  std::string ir = compileToIR(source);
+
+  ASSERT_FALSE(ir.empty());
+  // 检查 operator 函数被定义
+  EXPECT_TRUE(irContains(ir, "define i32 @\"^^$i32$i32\""));
+  // 检查使用了内置操作符（如 *=, +=）
+  EXPECT_TRUE(irContains(ir, "mul i32") || irContains(ir, "add i32"));
+}
+
+TEST(CodeGenTest, BuiltinOperatorsPrioritized) {
+  std::string source = R"(
+    let a = 10;
+    let b = 20;
+    let sum = a + b;
+    let product = a * b;
+  )";
+  std::string ir = compileToIR(source);
+
+  ASSERT_FALSE(ir.empty());
+  // 内置操作符应该使用 LLVM 指令，而不是函数调用
+  EXPECT_TRUE(irContains(ir, "add i32"));
+  EXPECT_TRUE(irContains(ir, "mul i32"));
+  // 不应该有 operator 函数调用
+  EXPECT_FALSE(irContains(ir, "call i32 @\"+$i32$i32\""));
+  EXPECT_FALSE(irContains(ir, "call i32 @\"*$i32$i32\""));
+}
+
 } // namespace
 
 int main(int argc, char **argv) {

@@ -1,0 +1,25 @@
+{
+  "name": "pecco-lang",
+  "displayName": "Pecco Language Support",
+  "description": "Syntax highlighting for Pecco programming language",
+  "version": "0.1.0",
+  "publisher": "pecco",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": ["Programming Languages"],
+  "keywords": ["pecco", "syntax", "highlighting"],
+  "contributes": {
+    "languages": [{
+      "id": "pecco",
+      "aliases": ["Pecco", "pecco"],
+      "extensions": [".pec"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "pecco",
+      "scopeName": "source.pecco",
+      "path": "./syntaxes/pecco.tmLanguage.json"
+    }]
+  }
+}

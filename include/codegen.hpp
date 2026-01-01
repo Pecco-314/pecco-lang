@@ -69,6 +69,7 @@ private:
   // 语句生成
   void gen_stmt(Stmt *stmt);
   void gen_func_stmt(FuncStmt *func);
+  void gen_operator_stmt(OperatorDeclStmt *op_decl);
   void gen_let_stmt(LetStmt *let);
   void gen_return_stmt(ReturnStmt *ret);
   void gen_expr_stmt(ExprStmt *expr_stmt);

@@ -97,6 +97,43 @@ bool CodeGen::generate(std::vector<StmtPtr> &stmts,
     }
   }
 
+  // 声明所有 operator（将它们作为函数）
+  auto all_operators = symbols.symbol_table().get_all_operators();
+  for (const auto &op_info : all_operators) {
+    // 构建参数类型列表
+    std::vector<llvm::Type *> param_types;
+    for (const auto &param_type : op_info.signature.param_types) {
+      llvm::Type *ty = get_llvm_type(param_type);
+      if (!ty) {
+        error("Unknown type: " + param_type, 0, 0);
+        return false;
+      }
+      param_types.push_back(ty);
+    }
+
+    // 获取返回类型
+    llvm::Type *return_type = get_llvm_type(op_info.signature.return_type);
+    if (!return_type) {
+      error("Unknown return type: " + op_info.signature.return_type, 0, 0);
+      return false;
+    }
+
+    // 生成 mangled name 用于区分重载：op_symbol$type1$type2...
+    std::string mangled_name = op_info.op;
+    for (const auto &param_type : op_info.signature.param_types) {
+      mangled_name += "$" + param_type;
+    }
+
+    // 创建函数声明（使用 mangled name）
+    llvm::FunctionType *func_type =
+        llvm::FunctionType::get(return_type, param_types, false);
+    llvm::Function *llvm_func =
+        llvm::Function::Create(func_type, llvm::Function::ExternalLinkage,
+                               mangled_name, module_.get());
+
+    functions_[mangled_name] = llvm_func;
+  }
+
   // 创建隐式入口函数 __pecco_entry
   llvm::FunctionType *entry_type =
       llvm::FunctionType::get(llvm::Type::getInt32Ty(context_), false);
@@ -120,6 +157,12 @@ bool CodeGen::generate(std::vector<StmtPtr> &stmts,
       auto *func = static_cast<FuncStmt *>(stmt.get());
       if (func->body) {
         gen_func_stmt(func);
+      }
+    } else if (stmt->kind == StmtKind::OperatorDecl) {
+      // 操作符定义单独处理
+      auto *op_decl = static_cast<OperatorDeclStmt *>(stmt.get());
+      if (op_decl->body) {
+        gen_operator_stmt(op_decl);
       }
     } else {
       // 顶层语句在入口函数中执行
@@ -230,6 +273,76 @@ void CodeGen::gen_func_stmt(FuncStmt *func) {
       // 如果函数应该返回值但没有 return，这是个错误
       // 但为了生成有效的 IR，我们返回一个默认值
       llvm::Type *ret_type = get_llvm_type(func->return_type.value()->name);
+      if (ret_type->isIntegerTy()) {
+        builder_.CreateRet(llvm::ConstantInt::get(ret_type, 0));
+      } else if (ret_type->isDoubleTy()) {
+        builder_.CreateRet(llvm::ConstantFP::get(ret_type, 0.0));
+      }
+    }
+  }
+
+  pop_scope();
+
+  // 恢复之前的函数和插入点
+  current_function_ = saved_function;
+  if (saved_block) {
+    builder_.SetInsertPoint(saved_block);
+  }
+}
+
+void CodeGen::gen_operator_stmt(OperatorDeclStmt *op_decl) {
+  // 生成 mangled name（与声明时相同）
+  std::string mangled_name = op_decl->op;
+  for (const auto &param : op_decl->params) {
+    if (param.type) {
+      mangled_name += "$" + param.type.value()->name;
+    }
+  }
+
+  // Operator 已经在 generate 中声明，这里生成函数体
+  llvm::Function *llvm_func = functions_[mangled_name];
+  if (!llvm_func) {
+    error("Operator function not found: " + op_decl->op, op_decl->loc.line,
+          op_decl->loc.column);
+    return;
+  }
+
+  // 保存当前函数状态和插入点
+  llvm::Function *saved_function = current_function_;
+  llvm::BasicBlock *saved_block = builder_.GetInsertBlock();
+  current_function_ = llvm_func;
+
+  // 创建函数入口块
+  llvm::BasicBlock *bb = llvm::BasicBlock::Create(context_, "entry", llvm_func);
+  builder_.SetInsertPoint(bb);
+
+  // 创建新作用域
+  push_scope();
+
+  // 为每个参数创建 alloca 并存储参数值
+  size_t idx = 0;
+  for (auto &arg : llvm_func->args()) {
+    llvm::AllocaInst *alloca =
+        builder_.CreateAlloca(arg.getType(), nullptr, arg.getName());
+    builder_.CreateStore(&arg, alloca);
+    add_variable(op_decl->params[idx].name, alloca);
+    idx++;
+  }
+
+  // 生成函数体
+  if (op_decl->body) {
+    gen_stmt(op_decl->body.value().get());
+  }
+
+  // 检查是否有返回语句，如果没有且返回类型是 void，添加 ret void
+  llvm::BasicBlock *current_bb = builder_.GetInsertBlock();
+  if (current_bb && !current_bb->getTerminator()) {
+    if (op_decl->return_type && op_decl->return_type.value()->name == "void") {
+      builder_.CreateRetVoid();
+    } else {
+      // 如果函数应该返回值但没有 return，这是个错误
+      // 但为了生成有效的 IR，我们返回一个默认值
+      llvm::Type *ret_type = get_llvm_type(op_decl->return_type.value()->name);
       if (ret_type->isIntegerTy()) {
         builder_.CreateRet(llvm::ConstantInt::get(ret_type, 0));
       } else if (ret_type->isDoubleTy()) {
@@ -627,6 +740,45 @@ llvm::Value *CodeGen::gen_binary_expr(BinaryExpr *binary) {
     return builder_.CreateOr(left, right, "ortmp");
   }
 
+  // 如果不是内置 operator，检查是否是用户定义的 operator
+  auto ops = symbols_->find_operators(op, OpPosition::Infix);
+  if (!ops.empty()) {
+    // 需要找到匹配类型的 operator
+    // 根据操作数的 LLVM 类型推断 Pecco 类型
+    std::string left_type, right_type;
+    if (left->getType()->isIntegerTy(32)) {
+      left_type = "i32";
+    } else if (left->getType()->isDoubleTy()) {
+      left_type = "f64";
+    } else if (left->getType()->isIntegerTy(1)) {
+      left_type = "bool";
+    }
+
+    if (right->getType()->isIntegerTy(32)) {
+      right_type = "i32";
+    } else if (right->getType()->isDoubleTy()) {
+      right_type = "f64";
+    } else if (right->getType()->isIntegerTy(1)) {
+      right_type = "bool";
+    }
+
+    // 查找匹配的 operator 重载
+    for (const auto &op_info : ops) {
+      if (op_info.signature.param_types.size() == 2 &&
+          op_info.signature.param_types[0] == left_type &&
+          op_info.signature.param_types[1] == right_type) {
+        // 构造 mangled name
+        std::string mangled_name = op + "$" + left_type + "$" + right_type;
+        llvm::Function *op_func = module_->getFunction(mangled_name);
+        if (op_func && !op_func->empty()) {
+          // 找到了有函数体的 operator
+          std::vector<llvm::Value *> args = {left, right};
+          return builder_.CreateCall(op_func, args, "optmp");
+        }
+      }
+    }
+  }
+
   error("Unknown binary operator: " + op, binary->loc.line, binary->loc.column);
   return nullptr;
 }
@@ -655,6 +807,35 @@ llvm::Value *CodeGen::gen_unary_expr(UnaryExpr *unary) {
   // 后缀操作符（如果有）
   else if (unary->position == OpPosition::Postfix) {
     // 当前没有后缀操作符
+  }
+
+  // 检查是否是用户定义的 operator（将其作为函数调用）
+  auto ops = symbols_->find_operators(op, unary->position);
+  if (!ops.empty()) {
+    // 根据操作数的 LLVM 类型推断 Pecco 类型
+    std::string operand_type;
+    if (operand->getType()->isIntegerTy(32)) {
+      operand_type = "i32";
+    } else if (operand->getType()->isDoubleTy()) {
+      operand_type = "f64";
+    } else if (operand->getType()->isIntegerTy(1)) {
+      operand_type = "bool";
+    }
+
+    // 查找匹配的 operator 重载
+    for (const auto &op_info : ops) {
+      if (op_info.signature.param_types.size() == 1 &&
+          op_info.signature.param_types[0] == operand_type) {
+        // 构造 mangled name
+        std::string mangled_name = op + "$" + operand_type;
+        llvm::Function *op_func = module_->getFunction(mangled_name);
+        if (op_func && !op_func->empty()) {
+          // 找到了有函数体的 operator
+          std::vector<llvm::Value *> args = {operand};
+          return builder_.CreateCall(op_func, args, "optmp");
+        }
+      }
+    }
   }
 
   error("Unknown unary operator: " + op, unary->loc.line, unary->loc.column);

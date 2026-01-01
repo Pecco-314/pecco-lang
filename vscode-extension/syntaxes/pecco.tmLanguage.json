@@ -1,0 +1,103 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Pecco",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#functions" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "name": "comment.line.number-sign.pecco",
+      "match": "#.*$"
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.pecco",
+          "match": "\\b(if|else|while|return)\\b"
+        },
+        {
+          "name": "keyword.other.pecco",
+          "match": "\\b(let|func|operator|prefix|infix|postfix|prec|assoc_left|assoc_right)\\b"
+        },
+        {
+          "name": "constant.language.pecco",
+          "match": "\\b(true|false)\\b"
+        }
+      ]
+    },
+    "types": {
+      "name": "storage.type.pecco",
+      "match": "\\b(i32|f64|bool|string|void)\\b"
+    },
+    "strings": {
+      "name": "string.quoted.double.pecco",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.pecco",
+          "match": "\\\\([\\\\\"/bfnrt]|u[0-9a-fA-F]{4})"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.pecco",
+          "match": "\\b\\d+\\.\\d+([eE][+-]?\\d+)?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.pecco",
+          "match": "\\b\\d+\\b"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()",
+          "captures": {
+            "1": { "name": "entity.name.function.pecco" }
+          }
+        },
+        {
+          "match": "\\bfunc\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+          "captures": {
+            "1": { "name": "entity.name.function.pecco" }
+          }
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.assignment.pecco",
+          "match": "(=|\\+=|-=|\\*=|/=|%=)"
+        },
+        {
+          "name": "keyword.operator.comparison.pecco",
+          "match": "(==|!=|<=|>=|<|>)"
+        },
+        {
+          "name": "keyword.operator.logical.pecco",
+          "match": "(&&|\\|\\||!)"
+        },
+        {
+          "name": "keyword.operator.bitwise.pecco",
+          "match": "(&|\\||\\^|<<|>>)"
+        },
+        {
+          "name": "keyword.operator.arithmetic.pecco",
+          "match": "(\\+|-|\\*|/|%|\\*\\*)"
+        }
+      ]
+    }
+  },
+  "scopeName": "source.pecco"
+}
