@@ -409,3 +409,77 @@ TEST_F(TypeCheckerTest, MixedTypeExpression) {
   ASSERT_TRUE(parse_and_check(code));
   EXPECT_FALSE(checker.has_errors());
 }
+
+// Test undefined variable detection
+TEST_F(TypeCheckerTest, UndefinedVariable) {
+  std::string code = R"(
+    let x = undefined_var;
+  )";
+
+  parse_and_check(code); // Parse and check, ignore return value
+  EXPECT_TRUE(checker.has_errors());
+  EXPECT_EQ(checker.errors().size(), 1);
+  EXPECT_NE(checker.errors()[0].message.find("Undefined variable"),
+            std::string::npos);
+  EXPECT_NE(checker.errors()[0].message.find("undefined_var"),
+            std::string::npos);
+}
+
+// Test undefined variable in expression
+TEST_F(TypeCheckerTest, UndefinedVariableInExpression) {
+  std::string code = R"(
+    let x = 10;
+    let y = x + undefined_var;
+  )";
+
+  parse_and_check(code);
+  EXPECT_TRUE(checker.has_errors());
+  EXPECT_EQ(checker.errors().size(), 1);
+  EXPECT_NE(checker.errors()[0].message.find("Undefined variable"),
+            std::string::npos);
+}
+
+// Test undefined variable in function
+TEST_F(TypeCheckerTest, UndefinedVariableInFunction) {
+  std::string code = R"(
+    func test() : i32 {
+      return not_defined;
+    }
+  )";
+
+  parse_and_check(code);
+  EXPECT_TRUE(checker.has_errors());
+  EXPECT_EQ(checker.errors().size(), 1);
+  EXPECT_NE(checker.errors()[0].message.find("Undefined variable"),
+            std::string::npos);
+}
+
+// Test multiple undefined variables
+TEST_F(TypeCheckerTest, MultipleUndefinedVariables) {
+  std::string code = R"(
+    let a = undefined_a;
+    let b = undefined_b;
+    let c = undefined_c + 42;
+  )";
+
+  parse_and_check(code);
+  EXPECT_TRUE(checker.has_errors());
+  EXPECT_EQ(checker.errors().size(), 3);
+}
+
+// Test undefined variable in nested scope
+TEST_F(TypeCheckerTest, UndefinedVariableInNestedScope) {
+  std::string code = R"(
+    let x = 10;
+    {
+      let y = x + 5;
+      let z = undefined_in_inner;
+    }
+  )";
+
+  parse_and_check(code);
+  EXPECT_TRUE(checker.has_errors());
+  EXPECT_EQ(checker.errors().size(), 1);
+  EXPECT_NE(checker.errors()[0].message.find("undefined_in_inner"),
+            std::string::npos);
+}

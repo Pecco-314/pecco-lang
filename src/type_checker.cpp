@@ -203,9 +203,10 @@ std::string TypeChecker::check_expr(Expr *expr) {
     // Look up variable type in scope stack
     type = lookup_variable_type(ident->name);
     if (type.empty()) {
-      // Variable not found or type unknown
-      // This could be valid for some cases, so don't error here
-      // Just leave type as empty
+      // Variable not found in any scope
+      std::ostringstream msg;
+      msg << "Undefined variable '" << ident->name << "'";
+      error(msg.str(), expr->loc.line, expr->loc.column);
     }
     break;
   }

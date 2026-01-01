@@ -158,6 +158,9 @@ operators: [**, **]
 - Let 语句：声明类型必须与初始化类型匹配
 - If/While：条件表达式必须是 `bool` 类型
 - 变量传播：支持多层嵌套作用域的类型传播
+- 符号定义检查：
+  - 变量引用必须先定义
+  - 函数调用必须存在对应函数
 
 **作用域管理**：
 
@@ -167,6 +170,7 @@ operators: [**, **]
 
 **错误示例**：
 
+类型不匹配：
 ```pec
 func test() : i32 {
   let x = 3.14;
@@ -180,6 +184,22 @@ func test() : i32 {
 type error at test.pec:3:17: Type mismatch: variable 'y' declared as 'i32' but initialized with 'f64'
   3 |   let y : i32 = x;
     |                 ^
+```
+
+未定义符号：
+```pec
+let x = unknown_var;
+let y = unknown_func(42);
+```
+
+错误信息：
+```
+type error at test.pec:1:9: Undefined variable 'unknown_var'
+  1 | let x = unknown_var;
+    |         ^
+type error at test.pec:2:21: Unknown function 'unknown_func'
+  2 | let y = unknown_func(42);
+    |                     ^
 ```
 
 所有类型检查都在编译时完成，无运行时开销。
