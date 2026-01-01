@@ -12,6 +12,7 @@ target_sources(pecco_lib
     ${CMAKE_CURRENT_SOURCE_DIR}/operator_resolver.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/scope_checker.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/type_checker.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/codegen.cpp
 )
 
 target_compile_features(pecco_lib PUBLIC cxx_std_20)
@@ -30,15 +31,18 @@ target_compile_definitions(pecco_lib PUBLIC
   STDLIB_DIR="${CMAKE_SOURCE_DIR}/stdlib"
 )
 
+llvm_map_components_to_libnames(llvm_libs support core irreader
+  X86AsmParser X86Desc X86Info X86CodeGen
+  MC MCParser Target Analysis)
+
+target_link_libraries(pecco_lib PUBLIC ${llvm_libs})
+
 # plc executable
 add_executable(plc driver.cpp)
-
-llvm_map_components_to_libnames(llvm_libs support)
 
 target_link_libraries(plc
   PRIVATE
     pecco_lib
-    ${llvm_libs}
 )
 
 target_compile_features(plc PRIVATE cxx_std_20)

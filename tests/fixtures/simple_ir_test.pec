@@ -1,0 +1,6 @@
+# Simple test for IR generation
+func double(x: i32) : i32 {
+  return x + x;
+}
+
+let val = double(21);

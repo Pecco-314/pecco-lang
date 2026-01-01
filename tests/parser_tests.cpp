@@ -332,10 +332,10 @@ TEST(ParserTest, MultipleErrorsWithRecovery) {
   EXPECT_EQ(parser.errors()[1].line, 3);
   EXPECT_EQ(parser.errors()[1].column, 15); // After "b"
 
-  // Note: let statement with error is not added to stmts,
-  // but func statement is successfully parsed despite internal error
-  EXPECT_EQ(stmts.size(), 1);
-  EXPECT_EQ(stmts[0]->kind, StmtKind::Func);
+  // With improved error recovery, both statements are kept despite errors
+  EXPECT_EQ(stmts.size(), 2);
+  EXPECT_EQ(stmts[0]->kind, StmtKind::Let);
+  EXPECT_EQ(stmts[1]->kind, StmtKind::Func);
 }
 
 TEST(ParserTest, ParseComplexOperatorExpression) {

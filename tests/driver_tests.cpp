@@ -5,6 +5,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <sys/wait.h>
 
 #ifndef PLC_BINARY
 #define PLC_BINARY "./build/src/plc"
@@ -46,11 +47,40 @@ TEST(PlcDriverTest, LexSampleFile) {
 }
 
 TEST(PlcDriverTest, DefaultModeCompilation) {
+  // Default mode compiles and links, generates executable
+  std::string exe_file = "exit_test";
+
+  // Clean up any existing file
+  std::remove(exe_file.c_str());
+
   std::string cmd =
-      std::string(PLC_BINARY) + " " + TEST_FIXTURES_DIR + "/sample.pec";
+      std::string(PLC_BINARY) + " " + TEST_FIXTURES_DIR + "/exit_test.pec";
   std::string output = runCommand(cmd);
 
-  EXPECT_TRUE(output.find("Compilation successful") != std::string::npos);
+  // Should generate executable
+  EXPECT_TRUE(output.find("Executable generated:") != std::string::npos);
+
+  // Check that executable was created
+  std::ifstream file(exe_file);
+  EXPECT_TRUE(file.good());
+  file.close();
+
+  // Clean up
+  std::remove(exe_file.c_str());
+}
+
+TEST(PlcDriverTest, RunModeCompilation) {
+  // --run mode compiles, links, and runs
+  std::string cmd = std::string(PLC_BINARY) + " " + TEST_FIXTURES_DIR +
+                    "/exit_test.pec --run";
+
+  // Use system() to get exit code
+  int exit_code = system(cmd.c_str());
+  // system() returns exit_code << 8 on Unix
+  int actual_exit = WEXITSTATUS(exit_code);
+
+  // Should exit with code 42
+  EXPECT_EQ(actual_exit, 42);
 }
 
 TEST(PlcDriverTest, FileNotFound) {
@@ -153,6 +183,65 @@ TEST(PlcDriverTest, DumpResolvedAST) {
   EXPECT_TRUE(output.find("Binary(+") != std::string::npos);
   // Should NOT contain OperatorSeq (it should be resolved)
   EXPECT_TRUE(output.find("OperatorSeq") == std::string::npos);
+}
+
+TEST(PlcDriverTest, EmitLLVM) {
+  std::string cmd = std::string(PLC_BINARY) + " " + TEST_FIXTURES_DIR +
+                    "/simple_ir_test.pec --emit-llvm";
+  std::string output = runCommand(cmd);
+
+  // Should contain LLVM IR module definition
+  EXPECT_TRUE(output.find("ModuleID") != std::string::npos ||
+              output.find("source_filename") != std::string::npos);
+
+  // Should contain the __pecco_entry function
+  EXPECT_TRUE(output.find("define i32 @__pecco_entry()") != std::string::npos);
+
+  // Should contain the user-defined double function
+  EXPECT_TRUE(output.find("define i32 @double(i32") != std::string::npos);
+
+  // Should contain add instruction (x + x)
+  EXPECT_TRUE(output.find("add") != std::string::npos);
+
+  // Should contain function call
+  EXPECT_TRUE(output.find("call i32 @double") != std::string::npos);
+
+  // Should contain ret instruction
+  EXPECT_TRUE(output.find("ret i32") != std::string::npos);
+}
+
+TEST(PlcDriverTest, EmitLLVMWithPrelude) {
+  std::string cmd = std::string(PLC_BINARY) + " " + TEST_FIXTURES_DIR +
+                    "/exit_test.pec --emit-llvm";
+  std::string output = runCommand(cmd);
+
+  // Should contain exit function declaration (external)
+  EXPECT_TRUE(output.find("declare void @exit(i32)") != std::string::npos);
+
+  // Should contain call to exit
+  EXPECT_TRUE(output.find("call void @exit(i32 42)") != std::string::npos);
+
+  // Should contain __pecco_entry
+  EXPECT_TRUE(output.find("define i32 @__pecco_entry()") != std::string::npos);
+}
+
+TEST(PlcDriverTest, CompileOnlyMode) {
+  std::string obj_file = std::string(TEST_FIXTURES_DIR) + "/test_compile.o";
+
+  // Clean up any existing file
+  std::remove(obj_file.c_str());
+
+  std::string cmd = std::string(PLC_BINARY) + " " + TEST_FIXTURES_DIR +
+                    "/simple_ir_test.pec --compile -o " + obj_file;
+  std::string output = runCommand(cmd);
+
+  // Check that object file was created
+  std::ifstream file(obj_file);
+  EXPECT_TRUE(file.good());
+  file.close();
+
+  // Clean up
+  std::remove(obj_file.c_str());
 }
 
 } // namespace

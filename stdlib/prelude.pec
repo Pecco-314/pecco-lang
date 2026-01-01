@@ -7,6 +7,9 @@
 # Basic I/O - wraps libc write
 func write(fd: i32, buf: string, count: i32) : i32;
 
+# Exit program with status code - wraps libc exit
+func exit(code: i32) : void;
+
 # ===== Arithmetic Operators (Binary) =====
 
 # Addition
@@ -28,8 +31,7 @@ operator infix / (a: f64, b: f64) : f64 prec 80;
 # Modulo
 operator infix % (a: i32, b: i32) : i32 prec 80;
 
-# Power
-operator infix ** (a: i32, b: i32) : i32 prec 90 assoc_right;
+# Power (floating point only, integer power will be in stdlib)
 operator infix ** (a: f64, b: f64) : f64 prec 90 assoc_right;
 
 # ===== Unary Operators =====

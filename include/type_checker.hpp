@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ast.hpp"
+#include "error.hpp"
 #include "scope.hpp"
 #include <string>
 #include <vector>
@@ -9,15 +10,6 @@ namespace pecco {
 
 class TypeChecker {
 public:
-  struct Error {
-    std::string message;
-    size_t line;
-    size_t column;
-
-    Error(std::string msg, size_t l = 0, size_t c = 0)
-        : message(std::move(msg)), line(l), column(c) {}
-  };
-
   TypeChecker() = default;
 
   // Check types for all statements and infer expression types

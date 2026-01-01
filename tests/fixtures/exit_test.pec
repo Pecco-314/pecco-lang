@@ -1,0 +1,2 @@
+# Test file that uses exit function
+exit(42);

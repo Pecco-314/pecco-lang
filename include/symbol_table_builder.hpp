@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ast.hpp"
+#include "error.hpp"
 #include "scope.hpp"
 #include <string>
 #include <vector>
@@ -25,13 +26,6 @@ public:
 
   // Check if there were any errors
   bool has_errors() const { return !errors_.empty(); }
-
-  struct Error {
-    std::string message;
-    size_t line;
-    size_t column;
-  };
-
   const std::vector<Error> &errors() const { return errors_; }
 
 private:

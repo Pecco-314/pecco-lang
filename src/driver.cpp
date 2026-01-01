@@ -1,3 +1,4 @@
+#include "codegen.hpp"
 #include "lexer.hpp"
 #include "operator_resolver.hpp"
 #include "parser.hpp"
@@ -6,13 +7,21 @@
 #include "symbol_table_builder.hpp"
 #include "type_checker.hpp"
 
+#include <llvm/IR/LegacyPassManager.h>
+#include <llvm/MC/TargetRegistry.h>
 #include <llvm/Support/CommandLine.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/MemoryBuffer.h>
+#include <llvm/Support/Program.h>
+#include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/WithColor.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Target/TargetMachine.h>
+#include <llvm/Target/TargetOptions.h>
+#include <llvm/TargetParser/Host.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <set>
 #include <sstream>
 #include <system_error>
@@ -39,6 +48,19 @@ static cl::opt<bool>
 static cl::opt<bool>
     HidePrelude("hide-prelude",
                 cl::desc("Hide prelude symbols in symbol table output"));
+
+static cl::opt<bool>
+    EmitLLVM("emit-llvm", cl::desc("Generate LLVM IR and output to stdout"));
+
+static cl::opt<bool>
+    CompileOnly("compile",
+                cl::desc("Compile to object file (.o) without linking"));
+
+static cl::opt<bool>
+    RunAfterCompile("run", cl::desc("Compile, link, and run the program"));
+
+static cl::opt<std::string> OutputFilename("o", cl::desc("Output filename"),
+                                           cl::value_desc("filename"));
 
 static void printToken(const pecco::Token &tok, raw_ostream &os) {
   os << "[" << pecco::to_string(tok.kind) << "] ";
@@ -87,6 +109,79 @@ static void printSourceLine(StringRef source, size_t line, size_t column,
   }
 
   os << "\n";
+}
+
+static int compileToObject(llvm::Module *module, StringRef output_file) {
+  // 初始化目标
+  llvm::InitializeAllTargetInfos();
+  llvm::InitializeAllTargets();
+  llvm::InitializeAllTargetMCs();
+  llvm::InitializeAllAsmParsers();
+  llvm::InitializeAllAsmPrinters();
+
+  auto target_triple = llvm::sys::getDefaultTargetTriple();
+  module->setTargetTriple(target_triple);
+
+  std::string error;
+  auto target = llvm::TargetRegistry::lookupTarget(target_triple, error);
+  if (!target) {
+    WithColor::error(errs(), "plc") << error << "\n";
+    return 1;
+  }
+
+  auto CPU = "generic";
+  auto features = "";
+  llvm::TargetOptions opt;
+  auto RM = std::optional<llvm::Reloc::Model>();
+  auto target_machine =
+      target->createTargetMachine(target_triple, CPU, features, opt, RM);
+
+  module->setDataLayout(target_machine->createDataLayout());
+
+  std::error_code EC;
+  llvm::raw_fd_ostream dest(output_file, EC, llvm::sys::fs::OF_None);
+  if (EC) {
+    WithColor::error(errs(), "plc")
+        << "Could not open file: " << EC.message() << "\n";
+    return 1;
+  }
+
+  llvm::legacy::PassManager pass;
+  auto file_type = llvm::CodeGenFileType::ObjectFile;
+
+  if (target_machine->addPassesToEmitFile(pass, dest, nullptr, file_type)) {
+    WithColor::error(errs(), "plc")
+        << "TargetMachine can't emit a file of this type\n";
+    return 1;
+  }
+
+  pass.run(*module);
+  dest.flush();
+
+  return 0;
+}
+
+// 添加 main wrapper 调用 __pecco_entry
+static void addMainWrapper(llvm::Module *module) {
+  llvm::LLVMContext &context = module->getContext();
+
+  // 查找 __pecco_entry 函数
+  llvm::Function *entry_func = module->getFunction("__pecco_entry");
+  if (!entry_func) {
+    return;
+  }
+
+  // 创建 main 函数
+  llvm::FunctionType *main_type =
+      llvm::FunctionType::get(llvm::Type::getInt32Ty(context), false);
+  llvm::Function *main_func = llvm::Function::Create(
+      main_type, llvm::Function::ExternalLinkage, "main", module);
+
+  // main 调用 __pecco_entry 并返回结果
+  llvm::BasicBlock *bb = llvm::BasicBlock::Create(context, "entry", main_func);
+  llvm::IRBuilder<> builder(bb);
+  llvm::Value *result = builder.CreateCall(entry_func);
+  builder.CreateRet(result);
 }
 
 static int runLexer(StringRef filename) {
@@ -550,10 +645,114 @@ static int runCompile(StringRef filename) {
     printHierarchicalSymbols(scoped_symbols, outs(), HidePrelude);
   }
 
-  if (!DumpAST && !DumpSymbols) {
-    // Default: just report success
-    WithColor(outs(), raw_ostream::GREEN, true)
-        << "Compilation successful (semantic analysis complete)\n";
+  // 从文件名提取模块名（去掉路径和扩展名）
+  std::string module_name = filename.str();
+  size_t last_slash = module_name.find_last_of("/\\");
+  if (last_slash != std::string::npos) {
+    module_name = module_name.substr(last_slash + 1);
+  }
+  size_t last_dot = module_name.find_last_of('.');
+  if (last_dot != std::string::npos) {
+    module_name = module_name.substr(0, last_dot);
+  }
+
+  // Code generation
+  if (EmitLLVM || CompileOnly || (!DumpAST && !DumpSymbols)) {
+    pecco::CodeGen codegen(module_name);
+    if (!codegen.generate(stmts, scoped_symbols)) {
+      for (const auto &err : codegen.errors()) {
+        WithColor::error(errs(), "plc")
+            << "code generation error at " << filename << ":" << err.line << ":"
+            << err.column << ": " << err.message << "\n";
+        printSourceLine(sourceContent, err.line, err.column, 0, 0, errs());
+      }
+      return 1;
+    }
+
+    // 只输出 LLVM IR
+    if (EmitLLVM) {
+      outs() << codegen.get_ir();
+      return 0;
+    }
+
+    // --compile 模式：只生成 .o 文件
+    if (CompileOnly) {
+      std::string obj_file;
+      if (!OutputFilename.empty()) {
+        obj_file = OutputFilename;
+      } else {
+        obj_file = module_name + ".o";
+      }
+
+      if (compileToObject(codegen.get_module(), obj_file)) {
+        return 1;
+      }
+
+      WithColor(outs(), raw_ostream::GREEN, true)
+          << "Object file generated: " << obj_file << "\n";
+      return 0;
+    }
+
+    // 默认行为：编译 + 链接，生成可执行文件
+    if (!DumpAST && !DumpSymbols) {
+      // 添加 main wrapper
+      addMainWrapper(codegen.get_module());
+
+      // 生成目标文件
+      std::string obj_file = module_name + ".o";
+      if (compileToObject(codegen.get_module(), obj_file)) {
+        return 1;
+      }
+
+      // 确定输出文件名
+      std::string exe_file;
+      if (!OutputFilename.empty()) {
+        exe_file = OutputFilename;
+      } else {
+        exe_file = module_name;
+      }
+
+      // 使用 cc 链接
+      auto cc = llvm::sys::findProgramByName("cc");
+      if (!cc) {
+        WithColor::error(errs(), "plc")
+            << "cc not found (need system C compiler for linking)\n";
+        llvm::sys::fs::remove(obj_file);
+        return 1;
+      }
+
+      std::vector<llvm::StringRef> args = {*cc, "-no-pie", obj_file, "-o",
+                                           exe_file};
+      std::string err_msg;
+      if (llvm::sys::ExecuteAndWait(*cc, args, std::nullopt, {}, 0, 0,
+                                    &err_msg)) {
+        WithColor::error(errs(), "plc")
+            << "Linking failed: " << err_msg << "\n";
+        llvm::sys::fs::remove(obj_file);
+        return 1;
+      }
+
+      // 清理目标文件
+      llvm::sys::fs::remove(obj_file);
+
+      // --run 模式：运行可执行文件
+      if (RunAfterCompile) {
+        std::vector<StringRef> run_args = {exe_file};
+        int run_result = llvm::sys::ExecuteAndWait(
+            exe_file, run_args, std::nullopt, {}, 0, 0, &err_msg);
+
+        // 如果未指定输出文件名，清理可执行文件
+        if (OutputFilename.empty()) {
+          llvm::sys::fs::remove(exe_file);
+        }
+
+        return run_result;
+      }
+
+      // 默认模式：不运行，保留可执行文件
+      outs() << "Executable generated: " << exe_file << "\n";
+      return 0;
+    }
   }
 
   return 0;
@@ -570,6 +769,6 @@ int main(int argc, char **argv) {
     return runParser(InputFilename);
   }
 
-  // Default: run full compilation (semantic analysis)
+  // Default: run full compilation
   return runCompile(InputFilename);
 }

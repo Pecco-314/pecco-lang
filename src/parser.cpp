@@ -8,7 +8,12 @@ Parser::Parser(std::vector<Token> tokens)
 
 std::vector<StmtPtr> Parser::parse_program() {
   std::vector<StmtPtr> stmts;
+  const size_t MAX_ERRORS = 10; // Prevent infinite error loops
   while (!at_end()) {
+    if (errors_.size() >= MAX_ERRORS) {
+      error("Too many parse errors, stopping");
+      break;
+    }
     auto stmt = parse_stmt();
     if (stmt) {
       stmts.push_back(std::move(stmt));
@@ -44,7 +49,14 @@ StmtPtr Parser::parse_stmt() {
     return parse_block_stmt();
   }
 
-  return parse_expr_stmt();
+  // Check if this can be an expression statement
+  if (can_start_primary() || check(TokenKind::Operator)) {
+    return parse_expr_stmt();
+  }
+
+  // Unrecognized token - report error and return
+  error("Unexpected token: " + tok.lexeme);
+  return nullptr;
 }
 
 StmtPtr Parser::parse_let_stmt() {
@@ -81,11 +93,8 @@ StmtPtr Parser::parse_let_stmt() {
     return nullptr;
   }
 
-  // Expect ';'
-  if (!expect_token(TokenKind::Punctuation, ";",
-                    "Expected ';' after let statement")) {
-    return nullptr;
-  }
+  // Expect ';' - but still return the statement even if missing
+  expect_token(TokenKind::Punctuation, ";", "Expected ';' after let statement");
 
   return std::make_unique<LetStmt>(std::move(name), std::move(type),
                                    std::move(init), token_loc(start_tok));
@@ -403,11 +412,9 @@ StmtPtr Parser::parse_return_stmt() {
     value = std::move(expr);
   }
 
-  // Expect ';'
-  if (!expect_token(TokenKind::Punctuation, ";",
-                    "Expected ';' after return statement")) {
-    return nullptr;
-  }
+  // Expect ';' - but still return the statement even if missing
+  expect_token(TokenKind::Punctuation, ";",
+               "Expected ';' after return statement");
 
   return std::make_unique<ReturnStmt>(std::move(value), token_loc(start_tok));
 }
@@ -463,7 +470,7 @@ StmtPtr Parser::parse_block_stmt() {
 StmtPtr Parser::parse_expr_stmt() {
   auto expr = parse_expr();
   if (!expr) {
-    error("Expected expression");
+    // parse_expr() already reported the error
     return nullptr;
   }
 
@@ -477,8 +484,6 @@ StmtPtr Parser::parse_expr_stmt() {
 
   return std::make_unique<ExprStmt>(std::move(expr), loc);
 }
-
-// ===== Expression Parsing =====
 
 // ===== Expression Parsing =====
 
@@ -806,7 +811,8 @@ void Parser::synchronize() {
       return;
     }
 
-    // Block end is a statement boundary (don't consume it)
+    // Block end is a statement boundary - but DON'T consume it
+    // Let the block parser handle it
     if (tok.kind == TokenKind::Punctuation && tok.lexeme == "}") {
       return;
     }
