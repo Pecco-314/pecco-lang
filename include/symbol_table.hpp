@@ -15,12 +15,14 @@ struct FunctionSignature {
   std::vector<std::string> param_types; // Parameter type names
   std::string return_type;              // Return type name (empty for void)
   bool is_declaration_only;             // True if no body
+  SymbolOrigin origin;                  // Where this symbol comes from
 
   FunctionSignature(std::string name, std::vector<std::string> param_types,
-                    std::string return_type, bool is_declaration_only = false)
+                    std::string return_type, bool is_declaration_only = false,
+                    SymbolOrigin origin = SymbolOrigin::User)
       : name(std::move(name)), param_types(std::move(param_types)),
         return_type(std::move(return_type)),
-        is_declaration_only(is_declaration_only) {}
+        is_declaration_only(is_declaration_only), origin(origin) {}
 };
 
 // Symbol table for functions and operators

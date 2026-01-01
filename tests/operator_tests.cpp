@@ -1,32 +1,32 @@
-#include "declaration_collector.hpp"
 #include "lexer.hpp"
 #include "operator_resolver.hpp"
 #include "parser.hpp"
+#include "symbol_table_builder.hpp"
 #include <gtest/gtest.h>
 
 using namespace pecco;
 
 class OperatorTest : public ::testing::Test {
 protected:
-  SymbolTable symbol_table;
-  DeclarationCollector collector;
+  ScopedSymbolTable symbol_table;
+  SymbolTableBuilder builder;
   std::vector<std::string> errors;
 };
 
 TEST_F(OperatorTest, LoadPrelude) {
   // Load prelude
-  ASSERT_TRUE(collector.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
+  ASSERT_TRUE(builder.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
 
   // Print errors if any
-  if (collector.has_errors()) {
-    for (const auto &err : collector.errors()) {
+  if (builder.has_errors()) {
+    for (const auto &err : builder.errors()) {
       std::cerr << "Semantic error: " << err.message << "\n";
     }
   }
 
-  ASSERT_FALSE(collector.has_errors());
+  ASSERT_FALSE(builder.has_errors());
 
-  const auto &symtab = symbol_table;
+  const auto &symtab = symbol_table.symbol_table();
 
   // Check that core function is loaded
   EXPECT_TRUE(symtab.has_function("write"));
@@ -43,9 +43,9 @@ TEST_F(OperatorTest, LoadPrelude) {
 }
 
 TEST_F(OperatorTest, FindFunctionOverloads) {
-  ASSERT_TRUE(collector.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
+  ASSERT_TRUE(builder.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
 
-  const auto &symtab = symbol_table;
+  const auto &symtab = symbol_table.symbol_table();
 
   // Find write function
   auto write_funcs = symtab.find_functions("write");
@@ -58,9 +58,9 @@ TEST_F(OperatorTest, FindFunctionOverloads) {
 }
 
 TEST_F(OperatorTest, FindOperatorOverloads) {
-  ASSERT_TRUE(collector.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
+  ASSERT_TRUE(builder.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
 
-  const auto &symtab = symbol_table;
+  const auto &symtab = symbol_table.symbol_table();
 
   // Find all + operators
   auto plus_ops = symtab.find_all_operators("+");
@@ -85,10 +85,10 @@ TEST_F(OperatorTest, CollectUserFunctions) {
   ASSERT_FALSE(parser.has_errors());
 
   // Collect declarations
-  collector.collect(stmts, symbol_table);
-  ASSERT_FALSE(collector.has_errors());
+  builder.collect(stmts, symbol_table);
+  ASSERT_FALSE(builder.has_errors());
 
-  const auto &symtab = symbol_table;
+  const auto &symtab = symbol_table.symbol_table();
 
   // Check that function is in symbol table
   EXPECT_TRUE(symtab.has_function("add"));
@@ -112,10 +112,10 @@ TEST_F(OperatorTest, CollectFunctionDeclarations) {
   ASSERT_FALSE(parser.has_errors());
 
   // Collect declarations
-  collector.collect(stmts, symbol_table);
-  ASSERT_FALSE(collector.has_errors());
+  builder.collect(stmts, symbol_table);
+  ASSERT_FALSE(builder.has_errors());
 
-  const auto &symtab = symbol_table;
+  const auto &symtab = symbol_table.symbol_table();
 
   // Check that function is in symbol table
   EXPECT_TRUE(symtab.has_function("extern_func"));
@@ -142,10 +142,10 @@ TEST_F(OperatorTest, CollectOperatorDeclarations) {
   ASSERT_FALSE(parser.has_errors());
 
   // Collect declarations
-  collector.collect(stmts, symbol_table);
-  ASSERT_FALSE(collector.has_errors());
+  builder.collect(stmts, symbol_table);
+  ASSERT_FALSE(builder.has_errors());
 
-  const auto &symtab = symbol_table;
+  const auto &symtab = symbol_table.symbol_table();
 
   // Check that operator is in symbol table
   EXPECT_TRUE(symtab.has_operator("+", OpPosition::Infix));
@@ -166,7 +166,7 @@ TEST_F(OperatorTest, CollectOperatorDeclarations) {
 
 TEST_F(OperatorTest, ResolveSimpleExpression) {
   // Load prelude first
-  ASSERT_TRUE(collector.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
+  ASSERT_TRUE(builder.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
 
   // Parse: 1 + 2
   std::string source = "let x = 1 + 2;";
@@ -184,8 +184,8 @@ TEST_F(OperatorTest, ResolveSimpleExpression) {
   EXPECT_EQ(let->init->kind, ExprKind::OperatorSeq);
 
   // Resolve operators
-  let->init = OperatorResolver::resolve_expr(std::move(let->init), symbol_table,
-                                             errors);
+  let->init = OperatorResolver::resolve_expr(
+      std::move(let->init), symbol_table.symbol_table(), errors);
 
   // Now it should be Binary
   ASSERT_EQ(let->init->kind, ExprKind::Binary);
@@ -197,7 +197,7 @@ TEST_F(OperatorTest, ResolveSimpleExpression) {
 
 TEST_F(OperatorTest, ResolvePrecedence) {
   // Load prelude first
-  ASSERT_TRUE(collector.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
+  ASSERT_TRUE(builder.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
 
   // Parse: 1 + 2 * 3  (should be: 1 + (2 * 3))
   std::string source = "let x = 1 + 2 * 3;";
@@ -208,8 +208,8 @@ TEST_F(OperatorTest, ResolvePrecedence) {
   ASSERT_FALSE(parser.has_errors());
 
   auto *let = static_cast<LetStmt *>(stmts[0].get());
-  let->init = OperatorResolver::resolve_expr(std::move(let->init), symbol_table,
-                                             errors);
+  let->init = OperatorResolver::resolve_expr(
+      std::move(let->init), symbol_table.symbol_table(), errors);
 
   // Should be Binary(+, IntLiteral(1), Binary(*, IntLiteral(2), IntLiteral(3)))
   ASSERT_EQ(let->init->kind, ExprKind::Binary);
@@ -226,7 +226,7 @@ TEST_F(OperatorTest, ResolvePrecedence) {
 
 TEST_F(OperatorTest, ResolveLeftAssociativity) {
   // Load prelude first
-  ASSERT_TRUE(collector.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
+  ASSERT_TRUE(builder.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
 
   // Parse: 10 - 5 - 2  (should be: (10 - 5) - 2)
   std::string source = "let x = 10 - 5 - 2;";
@@ -237,8 +237,8 @@ TEST_F(OperatorTest, ResolveLeftAssociativity) {
   ASSERT_FALSE(parser.has_errors());
 
   auto *let = static_cast<LetStmt *>(stmts[0].get());
-  let->init = OperatorResolver::resolve_expr(std::move(let->init), symbol_table,
-                                             errors);
+  let->init = OperatorResolver::resolve_expr(
+      std::move(let->init), symbol_table.symbol_table(), errors);
 
   // Should be Binary(-, Binary(-, IntLiteral(10), IntLiteral(5)),
   // IntLiteral(2))
@@ -256,7 +256,7 @@ TEST_F(OperatorTest, ResolveLeftAssociativity) {
 
 TEST_F(OperatorTest, ResolveRightAssociativity) {
   // Load prelude first
-  ASSERT_TRUE(collector.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
+  ASSERT_TRUE(builder.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
 
   // Parse: 2 ** 3 ** 2  (should be: 2 ** (3 ** 2))
   std::string source = "let x = 2 ** 3 ** 2;";
@@ -267,8 +267,8 @@ TEST_F(OperatorTest, ResolveRightAssociativity) {
   ASSERT_FALSE(parser.has_errors());
 
   auto *let = static_cast<LetStmt *>(stmts[0].get());
-  let->init = OperatorResolver::resolve_expr(std::move(let->init), symbol_table,
-                                             errors);
+  let->init = OperatorResolver::resolve_expr(
+      std::move(let->init), symbol_table.symbol_table(), errors);
 
   // Should be Binary(**, IntLiteral(2), Binary(**, IntLiteral(3),
   // IntLiteral(2)))
@@ -288,7 +288,7 @@ TEST_F(OperatorTest, ResolveRightAssociativity) {
 // Test custom operators with standard operators
 TEST_F(OperatorTest, ResolveCustomOperators) {
   // Load prelude first
-  ASSERT_TRUE(collector.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
+  ASSERT_TRUE(builder.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
 
   // Define custom operators with function bodies:
   // 1. prefix + (unary plus, identity)
@@ -310,7 +310,7 @@ TEST_F(OperatorTest, ResolveCustomOperators) {
   ASSERT_FALSE(parser_ops.has_errors());
 
   // Collect custom operators
-  collector.collect(op_stmts, symbol_table);
+  builder.collect(op_stmts, symbol_table);
 
   // Now test expressions using custom operators
   // Test 1: +5 (prefix plus)
@@ -322,8 +322,8 @@ TEST_F(OperatorTest, ResolveCustomOperators) {
   ASSERT_FALSE(parser1.has_errors());
 
   auto *let1 = static_cast<LetStmt *>(stmts1[0].get());
-  let1->init = OperatorResolver::resolve_expr(std::move(let1->init),
-                                              symbol_table, errors);
+  let1->init = OperatorResolver::resolve_expr(
+      std::move(let1->init), symbol_table.symbol_table(), errors);
 
   // Should be Unary(+, IntLiteral(5))
   ASSERT_EQ(let1->init->kind, ExprKind::Unary);
@@ -341,8 +341,8 @@ TEST_F(OperatorTest, ResolveCustomOperators) {
   ASSERT_FALSE(parser2.has_errors());
 
   auto *let2 = static_cast<LetStmt *>(stmts2[0].get());
-  let2->init = OperatorResolver::resolve_expr(std::move(let2->init),
-                                              symbol_table, errors);
+  let2->init = OperatorResolver::resolve_expr(
+      std::move(let2->init), symbol_table.symbol_table(), errors);
 
   // Should be Binary(<>, Identifier(a), Identifier(b))
   ASSERT_EQ(let2->init->kind, ExprKind::Binary);
@@ -355,7 +355,7 @@ TEST_F(OperatorTest, ResolveCustomOperators) {
 // Test mixing custom and standard operators with correct precedence
 TEST_F(OperatorTest, ResolveMixedCustomOperators) {
   // Load prelude
-  ASSERT_TRUE(collector.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
+  ASSERT_TRUE(builder.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
 
   // Define custom operator with different precedence and function body
   // infix +* with precedence 75 (between + and *)
@@ -370,7 +370,7 @@ TEST_F(OperatorTest, ResolveMixedCustomOperators) {
   Parser parser_ops(std::move(tok_ops));
   auto op_stmts = parser_ops.parse_program();
   ASSERT_FALSE(parser_ops.has_errors());
-  collector.collect(op_stmts, symbol_table);
+  builder.collect(op_stmts, symbol_table);
 
   // Test: 1 + 2 +* 3 * 4
   // Precedence: * (80) > +* (75) > + (70)
@@ -383,8 +383,8 @@ TEST_F(OperatorTest, ResolveMixedCustomOperators) {
   ASSERT_FALSE(parser.has_errors());
 
   auto *let = static_cast<LetStmt *>(stmts[0].get());
-  let->init = OperatorResolver::resolve_expr(std::move(let->init), symbol_table,
-                                             errors);
+  let->init = OperatorResolver::resolve_expr(
+      std::move(let->init), symbol_table.symbol_table(), errors);
 
   // Root should be: Binary(+, ...)
   ASSERT_EQ(let->init->kind, ExprKind::Binary);
@@ -409,7 +409,7 @@ TEST_F(OperatorTest, ResolveMixedCustomOperators) {
 // Test prefix operator with infix operators
 TEST_F(OperatorTest, ResolvePrefixWithInfix) {
   // Load prelude
-  ASSERT_TRUE(collector.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
+  ASSERT_TRUE(builder.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
 
   // Test: -5 + 10
   // Should be: Binary(+, Unary(-, IntLiteral(5)), IntLiteral(10))
@@ -421,8 +421,8 @@ TEST_F(OperatorTest, ResolvePrefixWithInfix) {
   ASSERT_FALSE(parser.has_errors());
 
   auto *let = static_cast<LetStmt *>(stmts[0].get());
-  let->init = OperatorResolver::resolve_expr(std::move(let->init), symbol_table,
-                                             errors);
+  let->init = OperatorResolver::resolve_expr(
+      std::move(let->init), symbol_table.symbol_table(), errors);
 
   // Root should be: Binary(+, ...)
   ASSERT_EQ(let->init->kind, ExprKind::Binary);
@@ -441,7 +441,7 @@ TEST_F(OperatorTest, ResolvePrefixWithInfix) {
 }
 TEST_F(OperatorTest, ResolvePostfixOperator) {
   // Load prelude
-  ASSERT_TRUE(collector.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
+  ASSERT_TRUE(builder.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
 
   // Define postfix ++ operator with body (n += 1)
   std::string source = R"(
@@ -458,12 +458,12 @@ let x = 5++;
   ASSERT_FALSE(parser.has_errors());
 
   // Collect operator declarations
-  collector.collect(stmts, symbol_table);
+  builder.collect(stmts, symbol_table);
 
   // Then resolve let statement
   auto *let = static_cast<LetStmt *>(stmts[1].get());
-  let->init = OperatorResolver::resolve_expr(std::move(let->init), symbol_table,
-                                             errors);
+  let->init = OperatorResolver::resolve_expr(
+      std::move(let->init), symbol_table.symbol_table(), errors);
 
   // Should be: Unary(++, IntLiteral(5), Postfix)
   ASSERT_EQ(let->init->kind, ExprKind::Unary);
@@ -477,7 +477,7 @@ let x = 5++;
 
 TEST_F(OperatorTest, ResolvePostfixWithInfix) {
   // Load prelude
-  ASSERT_TRUE(collector.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
+  ASSERT_TRUE(builder.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
 
   // Define postfix ++ operator
   std::string source = R"(
@@ -494,12 +494,12 @@ let x = 5++ + 3;
   ASSERT_FALSE(parser.has_errors());
 
   // Collect operator declarations
-  collector.collect(stmts, symbol_table);
+  builder.collect(stmts, symbol_table);
 
   // Resolve let statement
   auto *let = static_cast<LetStmt *>(stmts[1].get());
-  let->init = OperatorResolver::resolve_expr(std::move(let->init), symbol_table,
-                                             errors);
+  let->init = OperatorResolver::resolve_expr(
+      std::move(let->init), symbol_table.symbol_table(), errors);
 
   // Should be: Binary(+, Unary(++, IntLiteral(5), Postfix), IntLiteral(3))
   ASSERT_EQ(let->init->kind, ExprKind::Binary);
@@ -519,7 +519,7 @@ let x = 5++ + 3;
 
 TEST_F(OperatorTest, ResolveComplexMixedOperators) {
   // Load prelude
-  ASSERT_TRUE(collector.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
+  ASSERT_TRUE(builder.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
 
   // Define prefix and postfix ++ operator
   std::string source = R"(
@@ -549,20 +549,20 @@ let result = ++ x ++ ++ + ++ ++ y ++;
   ASSERT_FALSE(parser.has_errors());
 
   // Collect operator declarations
-  collector.collect(stmts, symbol_table);
+  builder.collect(stmts, symbol_table);
 
   // Resolve let statement for result
   auto *let = static_cast<LetStmt *>(stmts[4].get());
-  let->init = OperatorResolver::resolve_expr(std::move(let->init), symbol_table,
-                                             errors);
+  let->init = OperatorResolver::resolve_expr(
+      std::move(let->init), symbol_table.symbol_table(), errors);
 
   // Print errors if any
-  if (collector.has_errors()) {
-    for (const auto &err : collector.errors()) {
+  if (builder.has_errors()) {
+    for (const auto &err : builder.errors()) {
       std::cerr << "Semantic error: " << err.message << "\n";
     }
   }
-  ASSERT_FALSE(collector.has_errors());
+  ASSERT_FALSE(builder.has_errors());
 
   // Should be: Binary(+, left_part, right_part)
   ASSERT_EQ(let->init->kind, ExprKind::Binary);
@@ -615,7 +615,7 @@ let result = ++ x ++ ++ + ++ ++ y ++;
 
 TEST_F(OperatorTest, RejectMixedAssociativity) {
   // Load prelude
-  ASSERT_TRUE(collector.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
+  ASSERT_TRUE(builder.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table));
 
   // Define two operators with same precedence but different associativity
   std::string source = R"(
@@ -632,12 +632,12 @@ let x = a +< b +> c;
   ASSERT_FALSE(parser.has_errors());
 
   // Collect operator declarations
-  collector.collect(stmts, symbol_table);
+  builder.collect(stmts, symbol_table);
 
   // Try to resolve - should fail with mixed associativity error
   auto *let = static_cast<LetStmt *>(stmts[2].get());
-  let->init = OperatorResolver::resolve_expr(std::move(let->init), symbol_table,
-                                             errors);
+  let->init = OperatorResolver::resolve_expr(
+      std::move(let->init), symbol_table.symbol_table(), errors);
 
   // Should have errors
   ASSERT_TRUE(!errors.empty());

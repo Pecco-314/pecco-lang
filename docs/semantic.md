@@ -1,39 +1,61 @@
 # 语义分析
 
-语义分析分为两个独立阶段：
+语义分析分为2个阶段：
 
-## 阶段 1：声明收集（DeclarationCollector）
+## 阶段 1：符号表构建（SymbolTableBuilder）
 
-从 AST 构建符号表。
+递归遍历 AST，构建层级化符号表。
 
 **处理流程**：
 
-1. 加载标准库：`load_prelude("stdlib/prelude.pec", symbol_table)`
-2. 收集用户声明：`collect(statements, symbol_table)`
+1. 加载标准库：`load_prelude("stdlib/prelude.pec")` - 标记为 `Prelude`
+2. 收集用户声明：递归处理所有语句 - 标记为 `User`
 
 **收集内容**：
 
-- 函数定义/声明
-- 操作符定义/声明（包括优先级和结合性）
+- 全局：函数定义/声明、操作符定义/声明
+- 作用域：函数参数、局部变量、嵌套块
 
-**符号表内容**：
+**符号表结构**：
+
+层级化存储：
+- 全局符号表：函数、操作符
+- 作用域树：每个函数/块维护自己的变量表
+
+每个符号包含：
+- 名称、类型
+- 源码位置（行、列）
+- 来源标记（`User` / `Prelude`）
+
+**验证规则**：
+
+- 同一作用域内不允许重复定义变量
+- 不同作用域允许变量遮蔽（shadowing）
+- 嵌套函数定义报错（闭包未实现）
+- 函数/操作符参数缺少类型标注报错（泛型未实现）
+
+**示例输出**：
 
 ```
-函数：name(param_types) : return_type
-操作符：pos op(param_types) : return_type [prec N] [assoc dir]
-```
-
-示例：
-
-```
-Functions:
-  add(i32, i32) : i32
-  write(i32, string, i32) : i32 [declaration]
+Global Functions:
+  factorial(i32) : i32
+  write(...) : i32 [declaration] [prelude]
 
 Operators:
-  infix +(i32, i32) : i32 [prec 70, left]
-  infix +(f64, f64) : f64 [prec 70, left]
-  prefix -(i32) : i32
+  infix +(i32, i32) : i32 [prec 70] [prelude]
+  prefix <+>(i32) : i32
+
+Scope Hierarchy:
+Scope [global]:
+  Scope [function factorial]:
+    Variables:
+      n : i32 (line 4)
+    Scope [block #0 at line 4]:
+      Variables:
+        result (line 5)
+      Scope [block #1 at line 6]:
+        Variables:
+          i (line 7)
 ```
 
 ## 阶段 2：操作符解析（OperatorResolver）
@@ -41,11 +63,11 @@ Operators:
 将 `OperatorSeq` 转换为树形结构。
 
 **输入**：
-- AST（包含 `OperatorSeq` 节点）
-- 符号表（只读）
+- AST
+- 符号表
 
 **输出**：
-- 解析后的 AST（`OperatorSeq` → `Binary` / `Unary`）
+- 解析后的 AST
 - 错误列表（如果有）
 
 **解析算法**：

@@ -1,7 +1,9 @@
-#include "declaration_collector.hpp"
 #include "lexer.hpp"
 #include "operator_resolver.hpp"
 #include "parser.hpp"
+#include "scope.hpp"
+#include "scope_checker.hpp"
+#include "symbol_table_builder.hpp"
 
 #include <llvm/Support/CommandLine.h>
 #include <llvm/Support/FileSystem.h>
@@ -32,6 +34,10 @@ static cl::opt<bool>
 static cl::opt<bool>
     DumpSymbols("dump-symbols",
                 cl::desc("Dump symbol table after semantic analysis"));
+
+static cl::opt<bool>
+    HidePrelude("hide-prelude",
+                cl::desc("Hide prelude symbols in symbol table output"));
 
 static void printToken(const pecco::Token &tok, raw_ostream &os) {
   os << "[" << pecco::to_string(tok.kind) << "] ";
@@ -263,6 +269,151 @@ static void printSymbolTable(const pecco::SymbolTable &symtab,
   }
 }
 
+// Print a single scope with indentation
+static void printScope(const pecco::Scope *scope, raw_ostream &os, int indent,
+                       bool hide_prelude) {
+  std::string indent_str(indent * 2, ' ');
+
+  // Print scope header
+  std::string desc = scope->description();
+  if (desc.empty()) {
+    desc = "global";
+  }
+
+  WithColor(os, raw_ostream::YELLOW, true)
+      << indent_str << "Scope [" << desc << "]:\n";
+
+  // Print variables in this scope
+  auto vars = scope->get_local_variables();
+  if (!vars.empty()) {
+    bool printed_header = false;
+    for (const auto &var : vars) {
+      // Skip prelude variables if hide_prelude is true
+      if (hide_prelude && var.origin == pecco::SymbolOrigin::Prelude) {
+        continue;
+      }
+
+      if (!printed_header) {
+        os << indent_str << "  Variables:\n";
+        printed_header = true;
+      }
+
+      os << indent_str << "    " << var.name;
+      if (!var.type.empty()) {
+        os << " : " << var.type;
+      }
+      os << " (line " << var.line << ")";
+      if (var.origin == pecco::SymbolOrigin::Prelude) {
+        WithColor(os, raw_ostream::BLUE) << " [prelude]";
+      }
+      os << "\n";
+    }
+  }
+
+  // Recursively print child scopes
+  for (const auto *child : scope->children()) {
+    printScope(child, os, indent + 1, hide_prelude);
+  }
+}
+
+// Print hierarchical symbol table with all scopes
+static void printHierarchicalSymbols(const pecco::ScopedSymbolTable &symbols,
+                                     raw_ostream &os, bool hide_prelude) {
+  WithColor(os, raw_ostream::CYAN, true) << "\nHierarchical Symbol Table:\n";
+
+  // Print global functions
+  WithColor(os, raw_ostream::GREEN, true) << "\nGlobal Functions:\n";
+  auto func_names = symbols.symbol_table().get_all_function_names();
+  bool printed_any = false;
+  for (const auto &name : func_names) {
+    auto funcs = symbols.symbol_table().find_functions(name);
+    for (const auto &func : funcs) {
+      // Skip prelude functions if hide_prelude is true
+      if (hide_prelude && func.origin == pecco::SymbolOrigin::Prelude) {
+        continue;
+      }
+
+      printed_any = true;
+      os << "  " << name << "(";
+      for (size_t i = 0; i < func.param_types.size(); ++i) {
+        if (i > 0)
+          os << ", ";
+        os << func.param_types[i];
+      }
+      os << ")";
+      if (!func.return_type.empty()) {
+        os << " : " << func.return_type;
+      }
+      if (func.is_declaration_only) {
+        os << " [declaration]";
+      }
+      if (func.origin == pecco::SymbolOrigin::Prelude) {
+        WithColor(os, raw_ostream::BLUE) << " [prelude]";
+      }
+      os << "\n";
+    }
+  }
+  if (!printed_any && !hide_prelude) {
+    os << "  (none)\n";
+  }
+
+  // Print operators
+  WithColor(os, raw_ostream::GREEN, true) << "\nOperators:\n";
+  auto all_ops = symbols.symbol_table().get_all_operators();
+  std::sort(all_ops.begin(), all_ops.end(),
+            [](const pecco::OperatorInfo &a, const pecco::OperatorInfo &b) {
+              if (a.op != b.op)
+                return a.op < b.op;
+              return a.position < b.position;
+            });
+
+  printed_any = false;
+  for (const auto &info : all_ops) {
+    if (hide_prelude && info.origin == pecco::SymbolOrigin::Prelude) {
+      continue;
+    }
+
+    printed_any = true;
+    os << "  ";
+    switch (info.position) {
+    case pecco::OpPosition::Prefix:
+      os << "prefix ";
+      break;
+    case pecco::OpPosition::Infix:
+      os << "infix ";
+      break;
+    case pecco::OpPosition::Postfix:
+      os << "postfix ";
+      break;
+    }
+    os << info.op << "(";
+    for (size_t i = 0; i < info.signature.param_types.size(); ++i) {
+      if (i > 0)
+        os << ", ";
+      os << info.signature.param_types[i];
+    }
+    os << ") : " << info.signature.return_type;
+    if (info.position == pecco::OpPosition::Infix) {
+      os << " [prec " << info.precedence;
+      if (info.assoc == pecco::Associativity::Right) {
+        os << ", assoc_right";
+      }
+      os << "]";
+    }
+    if (info.origin == pecco::SymbolOrigin::Prelude) {
+      WithColor(os, raw_ostream::BLUE) << " [prelude]";
+    }
+    os << "\n";
+  }
+  if (!printed_any) {
+    os << "  (none)\n";
+  }
+
+  // Print scopes hierarchy
+  WithColor(os, raw_ostream::GREEN, true) << "\nScope Hierarchy:\n";
+  printScope(symbols.root_scope(), os, 0, hide_prelude);
+}
+
 static int runCompile(StringRef filename) {
   auto bufferOrErr = MemoryBuffer::getFile(filename);
   if (std::error_code ec = bufferOrErr.getError()) {
@@ -311,36 +462,37 @@ static int runCompile(StringRef filename) {
   }
 
   // Semantic analysis
-  // Step 1: Build symbol table
-  pecco::SymbolTable symbol_table;
-  pecco::DeclarationCollector collector;
+  // Phase 1: Build hierarchical symbol table (collect ALL declarations)
+  pecco::ScopedSymbolTable scoped_symbols;
+  pecco::SymbolTableBuilder builder;
 
   // Load prelude
-  if (!collector.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table)) {
+  if (!builder.load_prelude(STDLIB_DIR "/prelude.pec", scoped_symbols)) {
     WithColor::error(errs(), "plc") << "failed to load prelude\n";
-    if (collector.has_errors()) {
-      for (const auto &err : collector.errors()) {
+    if (builder.has_errors()) {
+      for (const auto &err : builder.errors()) {
         errs() << "  " << err.message << "\n";
       }
     }
     return 1;
   }
 
-  // Collect declarations from user code
-  if (!collector.collect(stmts, symbol_table)) {
-    for (const auto &err : collector.errors()) {
+  // Collect user declarations (recursively collects all scopes)
+  if (!builder.collect(stmts, scoped_symbols)) {
+    for (const auto &err : builder.errors()) {
       WithColor::error(errs(), "plc")
           << "semantic error at " << filename << ":" << err.line << ":"
           << err.column << ": " << err.message << "\n";
+      printSourceLine(sourceContent, err.line, err.column, 0, 0, errs());
     }
     return 1;
   }
 
-  // Step 2: Resolve operator sequences
+  // Phase 2: Resolve operator sequences
   std::vector<std::string> resolve_errors;
   for (auto &stmt : stmts) {
-    pecco::OperatorResolver::resolve_stmt(stmt.get(), symbol_table,
-                                          resolve_errors);
+    pecco::OperatorResolver::resolve_stmt(
+        stmt.get(), scoped_symbols.symbol_table(), resolve_errors);
   }
 
   // Check for errors after resolution
@@ -373,6 +525,10 @@ static int runCompile(StringRef filename) {
     return 1;
   }
 
+  // Note: Phase 3 (scope checking) is now integrated into DeclarationCollector
+  // The collector validates variables and reports errors during collection
+  // No separate scope checking phase is needed
+
   // Output based on flags
   if (DumpAST) {
     WithColor(outs(), raw_ostream::GREEN, true) << "Resolved AST:\n";
@@ -382,7 +538,7 @@ static int runCompile(StringRef filename) {
   }
 
   if (DumpSymbols) {
-    printSymbolTable(symbol_table, outs());
+    printHierarchicalSymbols(scoped_symbols, outs(), HidePrelude);
   }
 
   if (!DumpAST && !DumpSymbols) {

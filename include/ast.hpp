@@ -261,9 +261,11 @@ struct LetStmt : public Stmt {
 struct Parameter {
   std::string name;
   std::optional<TypePtr> type;
+  SourceLocation loc;
 
-  Parameter(std::string name, std::optional<TypePtr> type)
-      : name(std::move(name)), type(std::move(type)) {}
+  Parameter(std::string name, std::optional<TypePtr> type,
+            SourceLocation loc = SourceLocation())
+      : name(std::move(name)), type(std::move(type)), loc(loc) {}
 };
 
 struct FuncStmt : public Stmt {

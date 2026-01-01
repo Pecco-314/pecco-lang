@@ -7,6 +7,12 @@
 
 namespace pecco {
 
+// Symbol origin marker
+enum class SymbolOrigin {
+  User,    // User-defined symbol
+  Prelude, // From stdlib prelude
+};
+
 // Operator position types
 enum class OpPosition {
   Prefix,  // -x, !x
@@ -69,26 +75,31 @@ struct OperatorInfo {
   int precedence;              // Only valid for infix (0 for prefix/postfix)
   Associativity assoc;         // Only valid for infix
   OperatorSignature signature; // Type signature
+  SymbolOrigin origin;         // Where this symbol comes from
 
   OperatorInfo(std::string op, OpPosition position, int precedence,
-               Associativity assoc, OperatorSignature signature)
+               Associativity assoc, OperatorSignature signature,
+               SymbolOrigin origin = static_cast<SymbolOrigin>(0))
       : op(std::move(op)), position(position), precedence(precedence),
-        assoc(assoc), signature(std::move(signature)) {}
+        assoc(assoc), signature(std::move(signature)), origin(origin) {}
 
   // Convenience constructors
-  static OperatorInfo from_prefix(const PrefixOperatorInfo &info) {
+  static OperatorInfo from_prefix(const PrefixOperatorInfo &info,
+                                  SymbolOrigin origin = SymbolOrigin::User) {
     return OperatorInfo(info.op, OpPosition::Prefix, 0, Associativity::Left,
-                        info.signature);
+                        info.signature, origin);
   }
 
-  static OperatorInfo from_postfix(const PostfixOperatorInfo &info) {
+  static OperatorInfo from_postfix(const PostfixOperatorInfo &info,
+                                   SymbolOrigin origin = SymbolOrigin::User) {
     return OperatorInfo(info.op, OpPosition::Postfix, 0, Associativity::Left,
-                        info.signature);
+                        info.signature, origin);
   }
 
-  static OperatorInfo from_infix(const InfixOperatorInfo &info) {
+  static OperatorInfo from_infix(const InfixOperatorInfo &info,
+                                 SymbolOrigin origin = SymbolOrigin::User) {
     return OperatorInfo(info.op, OpPosition::Infix, info.precedence, info.assoc,
-                        info.signature);
+                        info.signature, origin);
   }
 };
 

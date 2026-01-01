@@ -25,7 +25,8 @@ plc <input-file> [options]
 
 - **输出选项**（可与默认模式组合）：
   - `--dump-ast`：输出语义分析后的 AST
-  - `--dump-symbols`：输出符号表
+  - `--dump-symbols`：输出层级化符号表
+  - `--hide-prelude`：隐藏标准库符号（需与 `--dump-symbols` 配合）
 
 - **其他选项**：
   - `--help`：显示帮助信息
@@ -45,7 +46,7 @@ Compilation successful (semantic analysis complete)
 **处理流程**：
 1. 词法分析：源代码 → token 流
 2. 语法分析：token 流 → 平面 AST
-3. 声明收集：加载标准库并收集用户声明，构建符号表
+3. 符号表构建：递归收集所有作用域的符号，构建层级化符号表
 4. 操作符解析：将平面 `OperatorSeq` 转换为树状 `Binary`/`Unary` 节点
 5. 报告成功或错误
 
@@ -62,14 +63,28 @@ $ plc sample.pec --dump-symbols
 
 Symbol Table:
 
-Functions:
-  write(i32, string, i32) : i32 [declaration]
+Global Functions:
+  factorial(i32) : i32
+  main() : i32
+  write(i32, string, i32) : i32 [declaration] [prelude]
 
 Operators:
-  infix +(i32, i32) : i32 [prec 70, left]
-  infix +(f64, f64) : f64 [prec 70, left]
-  infix *(i32, i32) : i32 [prec 80, left]
-  ...
+  infix +(i32, i32) : i32 [prec 70, left] [prelude]
+  infix +(f64, f64) : f64 [prec 70, left] [prelude]
+  infix *(i32, i32) : i32 [prec 80, left] [prelude]
+  prefix <+>(i32) : i32
+
+Scope Hierarchy:
+Scope [global]:
+  Scope [function factorial]:
+    Variables:
+      n : i32 (line 4)
+    Scope [block #0 at line 4]:
+      Variables:
+        result (line 5)
+  Scope [function main]:
+    Variables:
+      x (line 10)
 
 # 同时输出 AST 和符号表
 $ plc sample.pec --dump-ast --dump-symbols
@@ -154,23 +169,47 @@ Func(add : i32
   - `2 ** 3 ** 2` → `Binary(**, 2, Binary(**, 3, 2))` （右结合）
 
 ### 符号表输出 (`--dump-symbols`)
+层级化符号表，包含全局符号和所有作用域的变量：
 
-输出收集到的所有函数和运算符签名：
-
-**函数输出格式**：
+**全局函数格式**：
 ```
-Functions:
-  <函数名>(<参数类型列表>) : <返回类型> [declaration]
+Global Functions:
+  <函数名>(<参数类型列表>) : <返回类型> [declaration] [prelude]
 ```
 
-**运算符输出格式**：
+**运算符格式**：
 ```
 Operators:
-  <位置> <运算符>(<参数类型列表>) : <返回类型> [prec <优先级>, <结合性>]
+  <位置> <运算符>(<参数类型列表>) : <返回类型> [prec <优先级>, <结合性>] [prelude]
 ```
 
 - **位置**：`prefix`（前缀）、`infix`（中缀）、`postfix`（后缀）
 - **优先级**：数值越大优先级越高
+- **结合性**：`left`（左结合）、`right`（右结合）、`none`（不可结合）
+- **标记**：`[prelude]` 表示来自标准库
+
+**作用域层级格式**：
+```
+Scope Hierarchy:
+Scope [global]:
+  Scope [function <函数名>]:
+    Variables:
+      <变量名> : <类型> (line <行号>)
+    Scope [block #<编号> at line <行号>]:
+      Variables:
+        <变量名> (line <行号>)
+```
+
+- 嵌套缩进表示作用域层级
+- 每个函数/块维护自己的变量表
+- 显示变量的类型和源码位置
+
+**隐藏标准库** (`--hide-prelude`)：
+```bash
+$ plc sample.pec --dump-symbols --hide-prelude
+```
+
+只显示用户定义的符号，过滤掉标准库的函数和运算符
 - **结合性**：`left`（左结合）、`right`（右结合）、`none`（不可结合）
 
 ## 错误报告
@@ -273,7 +312,10 @@ plc: error: semantic error at test.pec:5:18: Mixed associativity at same precede
 
 ## 退出码
 
-- `0`：成功（无错误）
+- 隐藏标准库符号
+plc sample.pec --dump-symbols --hide-prelude
+
+# `0`：成功（无错误）
 - `1`：编译错误（词法、语法或语义错误）
 - `其他`：系统错误（文件不存在、权限问题等）
 

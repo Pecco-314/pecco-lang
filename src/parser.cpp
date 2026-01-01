@@ -123,7 +123,9 @@ StmtPtr Parser::parse_func_stmt() {
       error("Expected parameter name");
       return nullptr;
     }
-    std::string param_name = advance().lexeme;
+    Token param_token = advance();
+    std::string param_name = param_token.lexeme;
+    SourceLocation param_loc(param_token.line, param_token.column);
 
     // Optional type annotation
     std::optional<TypePtr> param_type;
@@ -136,7 +138,8 @@ StmtPtr Parser::parse_func_stmt() {
       }
     }
 
-    params.emplace_back(std::move(param_name), std::move(param_type));
+    params.emplace_back(std::move(param_name), std::move(param_type),
+                        param_loc);
   }
 
   if (!check(TokenKind::Punctuation) || peek().lexeme != ")") {
@@ -233,11 +236,14 @@ StmtPtr Parser::parse_operator_decl() {
       error("Expected parameter name");
       return nullptr;
     }
-    std::string param_name = advance().lexeme;
+    Token param_token = advance();
+    std::string param_name = param_token.lexeme;
+    SourceLocation param_loc(param_token.line, param_token.column);
 
     // Require type annotation for operators
     if (!check(TokenKind::Punctuation) || peek().lexeme != ":") {
-      error("Expected ':' after parameter name (type required for operators)");
+      error("Expected ':' after parameter name (generics unimplemented for "
+            "operators)");
       return nullptr;
     }
     advance(); // consume ':'
@@ -248,7 +254,8 @@ StmtPtr Parser::parse_operator_decl() {
       return nullptr;
     }
 
-    params.emplace_back(std::move(param_name), std::move(param_type));
+    params.emplace_back(std::move(param_name), std::move(param_type),
+                        param_loc);
   }
 
   // Validate parameter count based on position
@@ -273,7 +280,8 @@ StmtPtr Parser::parse_operator_decl() {
 
   // Require return type
   if (!check(TokenKind::Punctuation) || peek().lexeme != ":") {
-    error("Expected ':' after parameters (return type required for operators)");
+    error(
+        "Expected ':' after parameters (generics unimplemented for operators)");
     return nullptr;
   }
   advance(); // consume ':'

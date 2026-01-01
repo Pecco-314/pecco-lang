@@ -7,8 +7,10 @@ target_sources(pecco_lib
     ${CMAKE_CURRENT_SOURCE_DIR}/parser.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/operator.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/symbol_table.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/declaration_collector.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/scope.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/symbol_table_builder.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/operator_resolver.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/scope_checker.cpp
 )
 
 target_compile_features(pecco_lib PUBLIC cxx_std_20)
