@@ -182,15 +182,17 @@ TEST(ParserTest, ParseBinaryExpr) {
   EXPECT_EQ(let_stmt->init->kind, ExprKind::OperatorSeq);
 
   // Expression is now a flat sequence: 1 + 2 * 3
+  // Format: operand(1) op(+) operand(2) op(*) operand(3)
   auto *seq = static_cast<OperatorSeqExpr *>(let_stmt->init.get());
-  ASSERT_EQ(seq->operands.size(), 3);  // 1, 2, 3
-  ASSERT_EQ(seq->operators.size(), 2); // +, *
+  ASSERT_EQ(seq->items.size(), 5); // 3 operands + 2 operators
 
-  EXPECT_EQ(seq->operands[0]->kind, ExprKind::IntLiteral);
-  EXPECT_EQ(seq->operands[1]->kind, ExprKind::IntLiteral);
-  EXPECT_EQ(seq->operands[2]->kind, ExprKind::IntLiteral);
-  EXPECT_EQ(seq->operators[0], "+");
-  EXPECT_EQ(seq->operators[1], "*");
+  EXPECT_EQ(seq->items[0].kind, OpSeqItem::Kind::Operand);
+  EXPECT_EQ(seq->items[1].kind, OpSeqItem::Kind::Operator);
+  EXPECT_EQ(seq->items[1].op, "+");
+  EXPECT_EQ(seq->items[2].kind, OpSeqItem::Kind::Operand);
+  EXPECT_EQ(seq->items[3].kind, OpSeqItem::Kind::Operator);
+  EXPECT_EQ(seq->items[3].op, "*");
+  EXPECT_EQ(seq->items[4].kind, OpSeqItem::Kind::Operand);
 }
 
 TEST(ParserTest, ParseFunctionCall) {
@@ -334,6 +336,143 @@ TEST(ParserTest, MultipleErrorsWithRecovery) {
   // but func statement is successfully parsed despite internal error
   EXPECT_EQ(stmts.size(), 1);
   EXPECT_EQ(stmts[0]->kind, StmtKind::Func);
+}
+
+TEST(ParserTest, ParseComplexOperatorExpression) {
+  // Test complex expression with prefix, infix, and postfix operators
+  // Expression: -5++ + 3 * !flag--
+  // This tests parsing without semantic analysis (operators don't need
+  // definitions)
+  std::string source = "let result = -5++ + 3 * !flag--;";
+
+  auto [stmts, parser] = parse_source(source);
+
+  ASSERT_FALSE(parser.has_errors())
+      << "Parser errors: "
+      << (parser.errors().empty() ? "" : parser.errors()[0].message);
+  ASSERT_EQ(stmts.size(), 1);
+  ASSERT_EQ(stmts[0]->kind, StmtKind::Let);
+
+  auto *let = static_cast<LetStmt *>(stmts[0].get());
+  EXPECT_EQ(let->name, "result");
+
+  // Should be OperatorSeq
+  ASSERT_EQ(let->init->kind, ExprKind::OperatorSeq);
+  auto *seq = static_cast<OperatorSeqExpr *>(let->init.get());
+
+  // Format: - 5 ++ + 3 * ! flag --
+  // Total: 3 operands + 6 operators = 9 items
+  EXPECT_EQ(seq->items.size(), 9);
+
+  // Just verify it parsed as a sequence
+  EXPECT_EQ(seq->items[0].kind, OpSeqItem::Kind::Operator); // -
+  EXPECT_EQ(seq->items[1].kind, OpSeqItem::Kind::Operand);  // 5
+  EXPECT_EQ(seq->items[2].kind, OpSeqItem::Kind::Operator); // ++
+}
+
+TEST(ParserTest, ParseMultiplePostfixOperators) {
+  // Test: (5++)--  - Note: this requires parens to be valid
+  // Simpler: just test postfix chaining isn't really standard
+  // Let's use: x++ + y--  instead
+  std::string source = "let x = a++ + b--;";
+
+  auto [stmts, parser] = parse_source(source);
+
+  ASSERT_FALSE(parser.has_errors())
+      << "Parser errors: "
+      << (parser.errors().empty() ? "" : parser.errors()[0].message);
+  ASSERT_EQ(stmts.size(), 1);
+
+  auto *let = static_cast<LetStmt *>(stmts[0].get());
+  ASSERT_EQ(let->init->kind, ExprKind::OperatorSeq);
+  auto *seq = static_cast<OperatorSeqExpr *>(let->init.get());
+
+  // Format: a ++ + b --
+  // Total: 2 operands + 3 operators = 5 items
+  EXPECT_EQ(seq->items.size(), 5);
+
+  EXPECT_EQ(seq->items[0].kind, OpSeqItem::Kind::Operand);  // a
+  EXPECT_EQ(seq->items[1].kind, OpSeqItem::Kind::Operator); // ++
+  EXPECT_EQ(seq->items[2].kind, OpSeqItem::Kind::Operator); // +
+  EXPECT_EQ(seq->items[3].kind, OpSeqItem::Kind::Operand);  // b
+  EXPECT_EQ(seq->items[4].kind, OpSeqItem::Kind::Operator); // --
+}
+
+TEST(ParserTest, ParseMultiplePrefixOperators) {
+  // Test: -- ++x  (with space)
+  std::string source = "let y = -- ++x;";
+
+  auto [stmts, parser] = parse_source(source);
+
+  ASSERT_FALSE(parser.has_errors())
+      << "Parser errors: "
+      << (parser.errors().empty() ? "" : parser.errors()[0].message);
+  ASSERT_EQ(stmts.size(), 1);
+
+  auto *let = static_cast<LetStmt *>(stmts[0].get());
+  ASSERT_EQ(let->init->kind, ExprKind::OperatorSeq);
+  auto *seq = static_cast<OperatorSeqExpr *>(let->init.get());
+
+  // Format: -- ++ x
+  // Total: 1 operand + 2 operators = 3 items
+  EXPECT_EQ(seq->items.size(), 3);
+
+  EXPECT_EQ(seq->items[0].kind, OpSeqItem::Kind::Operator); // --
+  EXPECT_EQ(seq->items[0].op, "--");
+  EXPECT_EQ(seq->items[1].kind, OpSeqItem::Kind::Operator); // ++
+  EXPECT_EQ(seq->items[1].op, "++");
+  EXPECT_EQ(seq->items[2].kind, OpSeqItem::Kind::Operand); // x
+}
+
+TEST(ParserTest, ParseMixedPrefixPostfixInfix) {
+  // Test: -a++ + ++b--
+  std::string source = "let z = -a++ + ++b--;";
+
+  auto [stmts, parser] = parse_source(source);
+
+  ASSERT_FALSE(parser.has_errors())
+      << "Parser errors: "
+      << (parser.errors().empty() ? "" : parser.errors()[0].message);
+  ASSERT_EQ(stmts.size(), 1);
+
+  auto *let = static_cast<LetStmt *>(stmts[0].get());
+  ASSERT_EQ(let->init->kind, ExprKind::OperatorSeq);
+  auto *seq = static_cast<OperatorSeqExpr *>(let->init.get());
+
+  // Format: - a ++ + ++ b --
+  // Total: 2 operands + 5 operators = 7 items
+  EXPECT_EQ(seq->items.size(), 7);
+
+  EXPECT_EQ(seq->items[0].kind, OpSeqItem::Kind::Operator); // -
+  EXPECT_EQ(seq->items[1].kind, OpSeqItem::Kind::Operand);  // a
+  EXPECT_EQ(seq->items[2].kind, OpSeqItem::Kind::Operator); // ++
+  EXPECT_EQ(seq->items[3].kind, OpSeqItem::Kind::Operator); // +
+  EXPECT_EQ(seq->items[4].kind, OpSeqItem::Kind::Operator); // ++
+  EXPECT_EQ(seq->items[5].kind, OpSeqItem::Kind::Operand);  // b
+  EXPECT_EQ(seq->items[6].kind, OpSeqItem::Kind::Operator); // --
+}
+
+TEST(ParserTest, ParseChainedAssignment) {
+  // Test: a = b = c = 5
+  std::string source = "let x = a = b = c = 5;";
+
+  auto [stmts, parser] = parse_source(source);
+
+  ASSERT_FALSE(parser.has_errors())
+      << "Parser errors: "
+      << (parser.errors().empty() ? "" : parser.errors()[0].message);
+  ASSERT_EQ(stmts.size(), 1);
+
+  auto *let = static_cast<LetStmt *>(stmts[0].get());
+  ASSERT_EQ(let->init->kind, ExprKind::OperatorSeq);
+  auto *seq = static_cast<OperatorSeqExpr *>(let->init.get());
+
+  // Format: a = b = c = 5
+  // Total: 4 operands + 3 operators = 7 items
+  EXPECT_EQ(seq->items.size(), 7);
+
+  // Just verify it has the right number of items
+  // Semantic analysis will handle the actual resolution
 }
 
 } // namespace

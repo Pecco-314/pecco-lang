@@ -2,11 +2,13 @@ add_library(pecco_lib STATIC)
 
 target_sources(pecco_lib
   PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/ast.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/lexer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/parser.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/operator.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/symbol_table.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/semantic.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/declaration_collector.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/operator_resolver.cpp
 )
 
 target_compile_features(pecco_lib PUBLIC cxx_std_20)

@@ -50,9 +50,12 @@ private:
 
   // Operator sequence resolution helpers
   ExprPtr resolve_operator_seq(const OperatorSeqExpr *seq);
-  ExprPtr build_expr_tree(std::vector<ExprPtr> &operands,
-                          std::vector<std::string> &operators, size_t start,
-                          size_t end, int min_prec);
+  ExprPtr build_infix_tree(std::vector<ExprPtr> &operands,
+                           std::vector<std::string> &operators,
+                           std::vector<int> &precedences,
+                           std::vector<Associativity> &assocs,
+                           std::vector<SourceLocation> &locations, size_t start,
+                           size_t end);
 
   // Report error
   void error(const std::string &message, size_t line = 0, size_t column = 0);

@@ -1,178 +1,26 @@
-#include "semantic.hpp"
-#include "lexer.hpp"
-#include "parser.hpp"
-#include <fstream>
+#include "operator_resolver.hpp"
 #include <functional>
-#include <sstream>
 
 namespace pecco {
 
-void SemanticAnalyzer::collect_declarations(const std::vector<StmtPtr> &stmts) {
-  for (const auto &stmt : stmts) {
-    process_decl(stmt.get());
-  }
-}
-
-bool SemanticAnalyzer::load_prelude(const std::string &prelude_path) {
-  // Load prelude.pec
-  std::ifstream stream(prelude_path);
-  if (!stream) {
-    error("Failed to open prelude file: " + prelude_path);
-    return false;
-  }
-
-  std::stringstream buffer;
-  buffer << stream.rdbuf();
-  std::string content = buffer.str();
-
-  // Lex and parse prelude file
-  Lexer lexer(content);
-  auto tokens = lexer.tokenize_all();
-
-  // Check for lexer errors
-  for (const auto &tok : tokens) {
-    if (tok.kind == TokenKind::Error) {
-      error("Lexer error in prelude: " + tok.lexeme, tok.line, tok.column);
-      return false;
-    }
-  }
-
-  Parser parser(std::move(tokens));
-  auto stmts = parser.parse_program();
-
-  if (parser.has_errors()) {
-    for (const auto &err : parser.errors()) {
-      error("Parse error in prelude: " + err.message, err.line, err.column);
-    }
-    return false;
-  }
-
-  // Collect declarations from prelude
-  collect_declarations(stmts);
-
-  return true;
-}
-
-void SemanticAnalyzer::process_decl(const Stmt *stmt) {
-  if (!stmt)
-    return;
-
-  switch (stmt->kind) {
-  case StmtKind::Func:
-    process_func_decl(static_cast<const FuncStmt *>(stmt));
-    break;
-  case StmtKind::OperatorDecl:
-    process_operator_decl(static_cast<const OperatorDeclStmt *>(stmt));
-    break;
-  case StmtKind::Block: {
-    // Recursively process statements in blocks
-    auto *block = static_cast<const BlockStmt *>(stmt);
-    for (const auto &s : block->stmts) {
-      process_decl(s.get());
-    }
-    break;
-  }
-  default:
-    // Other statements are ignored in declaration collection phase
-    break;
-  }
-}
-
-void SemanticAnalyzer::process_func_decl(const FuncStmt *func) {
-  // Extract parameter types
-  std::vector<std::string> param_types;
-  for (const auto &param : func->params) {
-    if (param.type) {
-      param_types.push_back(get_type_name(param.type->get()));
-    } else {
-      // Type inference not yet supported - require explicit types
-      error("Function parameter '" + param.name +
-                "' must have explicit type annotation",
-            0, 0);
-      return;
-    }
-  }
-
-  // Extract return type
-  std::string return_type;
-  if (func->return_type) {
-    return_type = get_type_name(func->return_type->get());
-  } else {
-    return_type = ""; // void
-  }
-
-  // Check if it's a declaration only (no body)
-  bool is_decl_only = !func->body;
-
-  // Add to symbol table
-  FunctionSignature sig(func->name, param_types, return_type, is_decl_only);
-  symbol_table_.add_function(sig);
-}
-
-void SemanticAnalyzer::process_operator_decl(const OperatorDeclStmt *op) {
-  // Extract parameter types
-  std::vector<std::string> param_types;
-  for (const auto &param : op->params) {
-    if (param.type) {
-      param_types.push_back(get_type_name(param.type->get()));
-    } else {
-      error("Operator parameter must have explicit type annotation", 0, 0);
-      return;
-    }
-  }
-
-  // Extract return type
-  std::string return_type;
-  if (op->return_type) {
-    return_type = get_type_name(op->return_type->get());
-  } else {
-    error("Operator must have explicit return type", 0, 0);
-    return;
-  }
-
-  // Create operator signature
-  OperatorSignature signature(param_types, return_type);
-
-  // Create operator info
-  OperatorInfo info(op->op, op->position, op->precedence, op->assoc, signature);
-
-  // Add to symbol table
-  symbol_table_.add_operator(info);
-}
-
-std::string SemanticAnalyzer::get_type_name(const Type *type) const {
-  if (!type)
-    return "";
-
-  switch (type->kind) {
-  case TypeKind::Named:
-    return type->name;
-  default:
-    return "";
-  }
-}
-
-void SemanticAnalyzer::error(const std::string &message, size_t line,
-                             size_t column) {
-  errors_.push_back({message, line, column});
-}
-
-// Transform operator sequences to expression trees
-ExprPtr SemanticAnalyzer::resolve_operators(ExprPtr expr) {
+ExprPtr OperatorResolver::resolve_expr(ExprPtr expr,
+                                       const SymbolTable &symbol_table,
+                                       std::vector<std::string> &errors) {
   if (!expr)
     return nullptr;
 
   switch (expr->kind) {
   case ExprKind::OperatorSeq:
-    return resolve_operator_seq(static_cast<OperatorSeqExpr *>(expr.get()));
+    return resolve_operator_seq(static_cast<OperatorSeqExpr *>(expr.get()),
+                                symbol_table, errors);
 
   case ExprKind::Call: {
     auto *call = static_cast<CallExpr *>(expr.get());
     // Recursively resolve callee
-    call->callee = resolve_operators(std::move(call->callee));
+    call->callee = resolve_expr(std::move(call->callee), symbol_table, errors);
     // Recursively resolve arguments
     for (auto &arg : call->args) {
-      arg = resolve_operators(std::move(arg));
+      arg = resolve_expr(std::move(arg), symbol_table, errors);
     }
     return expr;
   }
@@ -183,10 +31,92 @@ ExprPtr SemanticAnalyzer::resolve_operators(ExprPtr expr) {
   }
 }
 
-ExprPtr SemanticAnalyzer::resolve_operator_seq(const OperatorSeqExpr *seq) {
+void OperatorResolver::resolve_stmt(Stmt *stmt, const SymbolTable &symbol_table,
+                                    std::vector<std::string> &errors) {
+  if (!stmt)
+    return;
+
+  switch (stmt->kind) {
+  case StmtKind::Let: {
+    auto *let = static_cast<LetStmt *>(stmt);
+    if (let->init) {
+      let->init = resolve_expr(std::move(let->init), symbol_table, errors);
+    }
+    break;
+  }
+  case StmtKind::Func: {
+    auto *func = static_cast<FuncStmt *>(stmt);
+    if (func->body) {
+      resolve_stmt(func->body->get(), symbol_table, errors);
+    }
+    break;
+  }
+  case StmtKind::OperatorDecl: {
+    auto *op = static_cast<OperatorDeclStmt *>(stmt);
+    if (op->body) {
+      resolve_stmt(op->body->get(), symbol_table, errors);
+    }
+    break;
+  }
+  case StmtKind::If: {
+    auto *if_stmt = static_cast<IfStmt *>(stmt);
+    if (if_stmt->condition) {
+      if_stmt->condition =
+          resolve_expr(std::move(if_stmt->condition), symbol_table, errors);
+    }
+    if (if_stmt->then_branch) {
+      resolve_stmt(if_stmt->then_branch.get(), symbol_table, errors);
+    }
+    if (if_stmt->else_branch) {
+      resolve_stmt(if_stmt->else_branch->get(), symbol_table, errors);
+    }
+    break;
+  }
+  case StmtKind::Return: {
+    auto *ret = static_cast<ReturnStmt *>(stmt);
+    if (ret->value) {
+      ret->value = resolve_expr(std::move(*ret->value), symbol_table, errors);
+    }
+    break;
+  }
+  case StmtKind::While: {
+    auto *while_stmt = static_cast<WhileStmt *>(stmt);
+    if (while_stmt->condition) {
+      while_stmt->condition =
+          resolve_expr(std::move(while_stmt->condition), symbol_table, errors);
+    }
+    if (while_stmt->body) {
+      resolve_stmt(while_stmt->body.get(), symbol_table, errors);
+    }
+    break;
+  }
+  case StmtKind::Expr: {
+    auto *expr_stmt = static_cast<ExprStmt *>(stmt);
+    if (expr_stmt->expr) {
+      expr_stmt->expr =
+          resolve_expr(std::move(expr_stmt->expr), symbol_table, errors);
+    }
+    break;
+  }
+  case StmtKind::Block: {
+    auto *block = static_cast<BlockStmt *>(stmt);
+    for (auto &s : block->stmts) {
+      resolve_stmt(s.get(), symbol_table, errors);
+    }
+    break;
+  }
+  default:
+    break;
+  }
+}
+
+ExprPtr
+OperatorResolver::resolve_operator_seq(const OperatorSeqExpr *seq,
+                                       const SymbolTable &symbol_table,
+                                       std::vector<std::string> &errors) {
   // Helper to clone an operand
   std::function<ExprPtr(const Expr *)> clone_operand =
-      [&, this](const Expr *operand) -> ExprPtr {
+      [&](const Expr *operand) -> ExprPtr {
     switch (operand->kind) {
     case ExprKind::IntLiteral:
       return std::make_unique<IntLiteralExpr>(
@@ -205,8 +135,8 @@ ExprPtr SemanticAnalyzer::resolve_operator_seq(const OperatorSeqExpr *seq) {
           static_cast<const IdentifierExpr *>(operand)->name, operand->loc);
     case ExprKind::OperatorSeq:
       // Recursively resolve nested operator sequences (from parentheses)
-      return resolve_operator_seq(
-          static_cast<const OperatorSeqExpr *>(operand));
+      return resolve_operator_seq(static_cast<const OperatorSeqExpr *>(operand),
+                                  symbol_table, errors);
     case ExprKind::Call: {
       // Clone call expression
       auto *call = static_cast<const CallExpr *>(operand);
@@ -221,7 +151,7 @@ ExprPtr SemanticAnalyzer::resolve_operator_seq(const OperatorSeqExpr *seq) {
     default:
       error("Cannot clone expression of type " +
                 std::to_string(static_cast<int>(operand->kind)),
-            seq->loc.line, seq->loc.column);
+            seq->loc.line, seq->loc.column, errors);
       return nullptr;
     }
   };
@@ -244,11 +174,11 @@ ExprPtr SemanticAnalyzer::resolve_operator_seq(const OperatorSeqExpr *seq) {
     while (idx < seq->items.size() &&
            seq->items[idx].kind == OpSeqItem::Kind::Operator) {
       const auto &op = seq->items[idx].op;
-      auto op_info = symbol_table_.find_operator(op, OpPosition::Prefix);
+      auto op_info = symbol_table.find_operator(op, OpPosition::Prefix);
       if (!op_info) {
         // Not a valid prefix operator
-        error("Operator '" + op + "' cannot be used as prefix operator here", 0,
-              0);
+        error("Operator '" + op + "' cannot be used as prefix operator here",
+              seq->items[idx].loc.line, seq->items[idx].loc.column, errors);
         return nullptr;
       }
       prefix_ops.push_back(op);
@@ -259,7 +189,7 @@ ExprPtr SemanticAnalyzer::resolve_operator_seq(const OperatorSeqExpr *seq) {
     if (idx >= seq->items.size() ||
         seq->items[idx].kind != OpSeqItem::Kind::Operand) {
       error("Expected operand after prefix operators", seq->loc.line,
-            seq->loc.column);
+            seq->loc.column, errors);
       return nullptr;
     }
     ExprPtr current = clone_operand(seq->items[idx].operand.get());
@@ -281,7 +211,7 @@ ExprPtr SemanticAnalyzer::resolve_operator_seq(const OperatorSeqExpr *seq) {
       const auto &op = seq->items[idx].op;
 
       // Check if this can be a postfix operator
-      auto postfix_info = symbol_table_.find_operator(op, OpPosition::Postfix);
+      auto postfix_info = symbol_table.find_operator(op, OpPosition::Postfix);
       if (!postfix_info) {
         // Can't be postfix, must stop here
         break;
@@ -300,15 +230,15 @@ ExprPtr SemanticAnalyzer::resolve_operator_seq(const OperatorSeqExpr *seq) {
     if (idx < seq->items.size()) {
       if (seq->items[idx].kind != OpSeqItem::Kind::Operator) {
         error("Expected infix operator between operands", seq->loc.line,
-              seq->loc.column);
+              seq->loc.column, errors);
         return nullptr;
       }
 
       const auto &op = seq->items[idx].op;
-      auto op_info = symbol_table_.find_operator(op, OpPosition::Infix);
+      auto op_info = symbol_table.find_operator(op, OpPosition::Infix);
       if (!op_info) {
         error("Operator '" + op + "' cannot be used as infix operator",
-              seq->loc.line, seq->loc.column);
+              seq->items[idx].loc.line, seq->items[idx].loc.column, errors);
         return nullptr;
       }
 
@@ -325,7 +255,7 @@ ExprPtr SemanticAnalyzer::resolve_operator_seq(const OperatorSeqExpr *seq) {
     error("Operator sequence structure error: " +
               std::to_string(infix_ops.size()) + " infix operators for " +
               std::to_string(operands.size()) + " operands",
-          0, 0);
+          seq->loc.line, seq->loc.column, errors);
     return nullptr;
   }
 
@@ -335,7 +265,7 @@ ExprPtr SemanticAnalyzer::resolve_operator_seq(const OperatorSeqExpr *seq) {
   }
 
   auto result = build_infix_tree(operands, infix_ops, infix_precs, infix_assocs,
-                                 infix_locs, 0, operands.size() - 1);
+                                 infix_locs, 0, operands.size() - 1, errors);
   if (!result) {
     // Error already reported in build_infix_tree
     return nullptr;
@@ -343,10 +273,11 @@ ExprPtr SemanticAnalyzer::resolve_operator_seq(const OperatorSeqExpr *seq) {
   return result;
 }
 
-ExprPtr SemanticAnalyzer::build_infix_tree(
+ExprPtr OperatorResolver::build_infix_tree(
     std::vector<ExprPtr> &operands, std::vector<std::string> &operators,
     std::vector<int> &precedences, std::vector<Associativity> &assocs,
-    std::vector<SourceLocation> &locations, size_t start, size_t end) {
+    std::vector<SourceLocation> &locations, size_t start, size_t end,
+    std::vector<std::string> &errors) {
   // Base case: single operand
   if (start == end) {
     return std::move(operands[start]);
@@ -386,7 +317,7 @@ ExprPtr SemanticAnalyzer::build_infix_tree(
                 (lowest_prec_assoc == Associativity::Left ? "assoc_left"
                                                           : "assoc_right") +
                 ") at precedence " + std::to_string(prec),
-            locations[i].line, locations[i].column);
+            locations[i].line, locations[i].column, errors);
         return nullptr;
       }
 
@@ -408,19 +339,29 @@ ExprPtr SemanticAnalyzer::build_infix_tree(
   const std::string &split_op = operators[split_pos];
 
   ExprPtr left = build_infix_tree(operands, operators, precedences, assocs,
-                                  locations, start, split_pos);
+                                  locations, start, split_pos, errors);
   if (!left) {
     return nullptr;
   }
 
   ExprPtr right = build_infix_tree(operands, operators, precedences, assocs,
-                                   locations, split_pos + 1, end);
+                                   locations, split_pos + 1, end, errors);
   if (!right) {
     return nullptr;
   }
 
   return std::make_unique<BinaryExpr>(split_op, std::move(left),
                                       std::move(right), locations[split_pos]);
+}
+
+void OperatorResolver::error(const std::string &message, size_t line,
+                             size_t column, std::vector<std::string> &errors) {
+  std::string full_msg = message;
+  if (line > 0) {
+    full_msg = "at " + std::to_string(line) + ":" + std::to_string(column) +
+               ": " + message;
+  }
+  errors.push_back(full_msg);
 }
 
 } // namespace pecco

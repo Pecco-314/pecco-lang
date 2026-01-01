@@ -29,8 +29,7 @@ StmtPtr Parser::parse_stmt() {
       return parse_let_stmt();
     } else if (tok.lexeme == "func") {
       return parse_func_stmt();
-    } else if (tok.lexeme == "prefix" || tok.lexeme == "infix" ||
-               tok.lexeme == "postfix") {
+    } else if (tok.lexeme == "operator") {
       return parse_operator_decl();
     } else if (tok.lexeme == "if") {
       return parse_if_stmt();
@@ -49,6 +48,7 @@ StmtPtr Parser::parse_stmt() {
 }
 
 StmtPtr Parser::parse_let_stmt() {
+  Token start_tok = peek();
   advance(); // consume 'let'
 
   if (!check(TokenKind::Identifier)) {
@@ -88,10 +88,11 @@ StmtPtr Parser::parse_let_stmt() {
   }
 
   return std::make_unique<LetStmt>(std::move(name), std::move(type),
-                                   std::move(init));
+                                   std::move(init), token_loc(start_tok));
 }
 
 StmtPtr Parser::parse_func_stmt() {
+  Token start_tok = peek();
   advance(); // consume 'func'
 
   if (!check(TokenKind::Identifier)) {
@@ -175,11 +176,21 @@ StmtPtr Parser::parse_func_stmt() {
   }
 
   return std::make_unique<FuncStmt>(std::move(name), std::move(params),
-                                    std::move(return_type), std::move(body));
+                                    std::move(return_type), std::move(body),
+                                    token_loc(start_tok));
 }
 
 StmtPtr Parser::parse_operator_decl() {
-  // Parse position: prefix/infix/postfix
+  // Expect 'operator' keyword (already consumed by parse_stmt)
+  Token start_tok = peek();
+  advance(); // consume 'operator'
+
+  // Parse operator position: prefix/infix/postfix
+  if (!check(TokenKind::Keyword)) {
+    error("Expected operator position ('prefix', 'infix', or 'postfix')");
+    return nullptr;
+  }
+
   std::string position_str = advance().lexeme;
   OpPosition position;
   if (position_str == "prefix") {
@@ -192,13 +203,6 @@ StmtPtr Parser::parse_operator_decl() {
     error("Expected 'prefix', 'infix', or 'postfix'");
     return nullptr;
   }
-
-  // Expect 'operator' keyword
-  if (!check(TokenKind::Keyword) || peek().lexeme != "operator") {
-    error("Expected 'operator' keyword");
-    return nullptr;
-  }
-  advance(); // consume 'operator'
 
   // Expect operator symbol
   if (!check(TokenKind::Operator)) {
@@ -280,11 +284,12 @@ StmtPtr Parser::parse_operator_decl() {
     return nullptr;
   }
 
-  // Parse precedence and associativity for infix operators
+  // Parse precedence and associativity (only for infix operators)
   int precedence = 0;
-  Associativity assoc = Associativity::None;
+  Associativity assoc = Associativity::Left;
 
   if (position == OpPosition::Infix) {
+    // Infix: require prec, optional assoc (default: left)
     // Expect 'prec' keyword
     if (!check(TokenKind::Keyword) || peek().lexeme != "prec") {
       error("Expected 'prec' keyword for infix operator");
@@ -299,30 +304,22 @@ StmtPtr Parser::parse_operator_decl() {
     }
     precedence = std::stoi(advance().lexeme);
 
-    // Expect 'assoc' keyword
-    if (!check(TokenKind::Keyword) || peek().lexeme != "assoc") {
-      error("Expected 'assoc' keyword for infix operator");
-      return nullptr;
+    // Optional associativity (default: left)
+    if (check(TokenKind::Keyword)) {
+      std::string assoc_str = peek().lexeme;
+      if (assoc_str == "assoc_left") {
+        advance();
+        assoc = Associativity::Left;
+      } else if (assoc_str == "assoc_right") {
+        advance();
+        assoc = Associativity::Right;
+      }
+      // If not assoc_left or assoc_right, don't consume and use default
     }
-    advance(); // consume 'assoc'
-
-    // Expect associativity: left/right/none
-    if (!check(TokenKind::Keyword)) {
-      error("Expected associativity ('left', 'right', or 'none')");
-      return nullptr;
-    }
-    std::string assoc_str = advance().lexeme;
-    if (assoc_str == "left") {
-      assoc = Associativity::Left;
-    } else if (assoc_str == "right") {
-      assoc = Associativity::Right;
-    } else if (assoc_str == "none") {
-      assoc = Associativity::None;
-    } else {
-      error("Associativity must be 'left', 'right', or 'none'");
-      return nullptr;
-    }
+    // Default is already set to Associativity::Left above
   }
+  // Prefix and postfix operators don't need precedence or associativity
+  // They are handled by greedy algorithm in semantic analysis
 
   // Check for function body or semicolon
   std::optional<StmtPtr> body;
@@ -343,10 +340,11 @@ StmtPtr Parser::parse_operator_decl() {
 
   return std::make_unique<OperatorDeclStmt>(
       std::move(op), position, std::move(params), std::move(return_type),
-      precedence, assoc, std::move(body));
+      precedence, assoc, std::move(body), token_loc(start_tok));
 }
 
 StmtPtr Parser::parse_if_stmt() {
+  Token start_tok = peek();
   advance(); // consume 'if'
 
   auto condition = parse_expr();
@@ -379,10 +377,11 @@ StmtPtr Parser::parse_if_stmt() {
   }
 
   return std::make_unique<IfStmt>(std::move(condition), std::move(then_branch),
-                                  std::move(else_branch));
+                                  std::move(else_branch), token_loc(start_tok));
 }
 
 StmtPtr Parser::parse_return_stmt() {
+  Token start_tok = peek();
   advance(); // consume 'return'
 
   std::optional<ExprPtr> value;
@@ -402,10 +401,11 @@ StmtPtr Parser::parse_return_stmt() {
     return nullptr;
   }
 
-  return std::make_unique<ReturnStmt>(std::move(value));
+  return std::make_unique<ReturnStmt>(std::move(value), token_loc(start_tok));
 }
 
 StmtPtr Parser::parse_while_stmt() {
+  Token start_tok = peek();
   advance(); // consume 'while'
 
   auto condition = parse_expr();
@@ -420,10 +420,12 @@ StmtPtr Parser::parse_while_stmt() {
     return nullptr;
   }
 
-  return std::make_unique<WhileStmt>(std::move(condition), std::move(body));
+  return std::make_unique<WhileStmt>(std::move(condition), std::move(body),
+                                     token_loc(start_tok));
 }
 
 StmtPtr Parser::parse_block_stmt() {
+  Token start_tok = peek();
   if (!check(TokenKind::Punctuation) || peek().lexeme != "{") {
     error("Expected '{'");
     return nullptr;
@@ -447,7 +449,7 @@ StmtPtr Parser::parse_block_stmt() {
   }
   advance(); // consume '}'
 
-  return std::make_unique<BlockStmt>(std::move(stmts));
+  return std::make_unique<BlockStmt>(std::move(stmts), token_loc(start_tok));
 }
 
 StmtPtr Parser::parse_expr_stmt() {
@@ -457,13 +459,15 @@ StmtPtr Parser::parse_expr_stmt() {
     return nullptr;
   }
 
+  SourceLocation loc = expr->loc; // Save location before moving
+
   // Expect ';'
   if (!expect_token(TokenKind::Punctuation, ";",
                     "Expected ';' after expression")) {
     return nullptr;
   }
 
-  return std::make_unique<ExprStmt>(std::move(expr));
+  return std::make_unique<ExprStmt>(std::move(expr), loc);
 }
 
 // ===== Expression Parsing =====
@@ -471,39 +475,60 @@ StmtPtr Parser::parse_expr_stmt() {
 // ===== Expression Parsing =====
 
 ExprPtr Parser::parse_expr() {
-  // Parse expression as a flat sequence of operands and operators
-  std::vector<ExprPtr> operands;
-  std::vector<std::string> operators;
+  Token start_tok = peek();
 
-  // Parse first operand
-  auto first = parse_primary_expr();
-  if (!first) {
+  // Parse expression as a flat sequence of operands and operators
+  // We don't distinguish prefix/infix/postfix here - that's semantic analysis's
+  // job Strategy: Alternately collect operators and primaries Rule: primaries
+  // cannot be consecutive (must have operators between them)
+  //       operators can be consecutive
+  // This handles: -5++, -- ++x, 5 + 3, -5++ + --3--, etc.
+
+  std::vector<OpSeqItem> items;
+
+  bool last_was_primary = false;
+
+  while (!at_end()) {
+    if (check(TokenKind::Operator)) {
+      // Collect operator
+      Token op_tok = peek();
+      items.push_back(OpSeqItem(op_tok.lexeme, token_loc(op_tok)));
+      advance();
+      last_was_primary = false;
+    } else if (can_start_primary()) {
+      // Check if we have two consecutive primaries (error)
+      if (last_was_primary) {
+        // Two primaries in a row - stop here
+        break;
+      }
+
+      // Parse primary
+      auto operand = parse_primary_expr();
+      if (!operand) {
+        return nullptr;
+      }
+      items.push_back(OpSeqItem(std::move(operand)));
+      last_was_primary = true;
+    } else {
+      // Can't continue
+      break;
+    }
+  }
+
+  // Must have at least one item
+  if (items.empty()) {
+    error("Expected expression");
     return nullptr;
   }
-  operands.push_back(std::move(first));
 
-  // Parse (operator operand)* sequence
-  while (!at_end() && check(TokenKind::Operator)) {
-    Token op_tok = peek();
-    operators.push_back(op_tok.lexeme);
-    advance(); // consume operator
-
-    auto operand = parse_primary_expr();
-    if (!operand) {
-      error("Expected expression after operator");
-      return nullptr;
-    }
-    operands.push_back(std::move(operand));
-  }
-
-  // If only one operand and no operators, return it directly
-  if (operators.empty()) {
-    return std::move(operands[0]);
+  // If only one item and it's an operand, return it directly
+  if (items.size() == 1 && items[0].kind == OpSeqItem::Kind::Operand) {
+    return std::move(items[0].operand);
   }
 
   // Otherwise return an OperatorSeqExpr
-  return std::make_unique<OperatorSeqExpr>(std::move(operands),
-                                           std::move(operators));
+  return std::make_unique<OperatorSeqExpr>(std::move(items),
+                                           token_loc(start_tok));
 }
 
 ExprPtr Parser::parse_primary_expr() {
@@ -512,34 +537,34 @@ ExprPtr Parser::parse_primary_expr() {
   // Literals
   if (tok.kind == TokenKind::Integer) {
     advance();
-    return std::make_unique<IntLiteralExpr>(tok.lexeme);
+    return std::make_unique<IntLiteralExpr>(tok.lexeme, token_loc(tok));
   }
 
   if (tok.kind == TokenKind::Float) {
     advance();
-    return std::make_unique<FloatLiteralExpr>(tok.lexeme);
+    return std::make_unique<FloatLiteralExpr>(tok.lexeme, token_loc(tok));
   }
 
   if (tok.kind == TokenKind::String) {
     advance();
-    return std::make_unique<StringLiteralExpr>(tok.lexeme);
+    return std::make_unique<StringLiteralExpr>(tok.lexeme, token_loc(tok));
   }
 
   if (tok.kind == TokenKind::Keyword) {
     if (tok.lexeme == "true") {
       advance();
-      return std::make_unique<BoolLiteralExpr>(true);
+      return std::make_unique<BoolLiteralExpr>(true, token_loc(tok));
     }
     if (tok.lexeme == "false") {
       advance();
-      return std::make_unique<BoolLiteralExpr>(false);
+      return std::make_unique<BoolLiteralExpr>(false, token_loc(tok));
     }
   }
 
   // Identifier
   if (tok.kind == TokenKind::Identifier) {
     advance();
-    auto expr = std::make_unique<IdentifierExpr>(tok.lexeme);
+    auto expr = std::make_unique<IdentifierExpr>(tok.lexeme, token_loc(tok));
 
     // Check for function call
     if (check(TokenKind::Punctuation) && peek().lexeme == "(") {
@@ -570,6 +595,7 @@ ExprPtr Parser::parse_primary_expr() {
 }
 
 ExprPtr Parser::parse_call_expr(ExprPtr callee) {
+  Token start_tok = peek();
   advance(); // consume '('
 
   std::vector<ExprPtr> args;
@@ -596,7 +622,8 @@ ExprPtr Parser::parse_call_expr(ExprPtr callee) {
   }
   advance(); // consume ')'
 
-  return std::make_unique<CallExpr>(std::move(callee), std::move(args));
+  return std::make_unique<CallExpr>(std::move(callee), std::move(args),
+                                    token_loc(start_tok));
 }
 
 // ===== Type Parsing =====
@@ -606,8 +633,9 @@ std::optional<TypePtr> Parser::parse_type_annotation() {
     error("Expected type name");
     return std::nullopt;
   }
+  Token tok = peek();
   std::string type_name = advance().lexeme;
-  return std::make_unique<Type>(std::move(type_name));
+  return std::make_unique<Type>(std::move(type_name), token_loc(tok));
 }
 
 // ===== Helper Functions =====
@@ -694,6 +722,37 @@ bool Parser::at_end() const {
 
   return idx >= tokens_.size() ||
          (idx < tokens_.size() && tokens_[idx].kind == TokenKind::EndOfFile);
+}
+
+bool Parser::can_start_primary() const {
+  if (at_end())
+    return false;
+
+  Token tok = peek();
+
+  // Literals
+  if (tok.kind == TokenKind::Integer || tok.kind == TokenKind::Float ||
+      tok.kind == TokenKind::String) {
+    return true;
+  }
+
+  // Identifiers
+  if (tok.kind == TokenKind::Identifier) {
+    return true;
+  }
+
+  // Boolean literals
+  if (tok.kind == TokenKind::Keyword &&
+      (tok.lexeme == "true" || tok.lexeme == "false")) {
+    return true;
+  }
+
+  // Parenthesized expressions
+  if (tok.kind == TokenKind::Punctuation && tok.lexeme == "(") {
+    return true;
+  }
+
+  return false;
 }
 
 void Parser::error(const std::string &message) {

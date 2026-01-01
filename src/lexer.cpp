@@ -12,10 +12,10 @@ namespace {
 constexpr std::string_view kOperatorChars = "+-*/%=&|^!<>?.";
 constexpr std::string_view kPunctuationChars = "(){}[],;:#";
 
-constexpr std::array<std::string_view, 17> kKeywords = {
-    "let",  "func",  "if",       "else",   "return",  "while",
-    "true", "false", "operator", "prefix", "postfix", "infix",
-    "prec", "assoc", "left",     "right",  "none",
+constexpr std::array<std::string_view, 15> kKeywords = {
+    "let",     "func",  "if",    "else",       "return",
+    "while",   "true",  "false", "operator",   "prefix",
+    "postfix", "infix", "prec",  "assoc_left", "assoc_right",
 };
 
 bool is_identifier_start(char c) {

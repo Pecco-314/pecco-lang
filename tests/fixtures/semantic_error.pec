@@ -1,0 +1,7 @@
+operator infix +< (a: i32, b: i32): i32 prec 70 assoc_left;
+operator infix +> (a: i32, b: i32): i32 prec 70 assoc_right;
+
+func test(): i32 {
+  let x = 1 +< 2 +> 3;
+  return x;
+}

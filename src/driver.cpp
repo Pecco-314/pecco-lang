@@ -1,6 +1,7 @@
+#include "declaration_collector.hpp"
 #include "lexer.hpp"
+#include "operator_resolver.hpp"
 #include "parser.hpp"
-#include "semantic.hpp"
 
 #include <llvm/Support/CommandLine.h>
 #include <llvm/Support/FileSystem.h>
@@ -8,7 +9,9 @@
 #include <llvm/Support/WithColor.h>
 #include <llvm/Support/raw_ostream.h>
 
+#include <algorithm>
 #include <set>
+#include <sstream>
 #include <system_error>
 
 using namespace llvm;
@@ -29,10 +32,6 @@ static cl::opt<bool>
 static cl::opt<bool>
     DumpSymbols("dump-symbols",
                 cl::desc("Dump symbol table after semantic analysis"));
-
-// Forward declaration
-static void resolveStmtOperators(pecco::Stmt *stmt,
-                                 pecco::SemanticAnalyzer &analyzer);
 
 static void printToken(const pecco::Token &tok, raw_ostream &os) {
   os << "[" << pecco::to_string(tok.kind) << "] ";
@@ -112,226 +111,33 @@ static int runLexer(StringRef filename) {
   return hasError ? 1 : 0;
 }
 
-static void printStmt(const pecco::Stmt *stmt, raw_ostream &os, int indent = 0);
-static void printExpr(const pecco::Expr *expr, raw_ostream &os);
-
-static void printIndent(raw_ostream &os, int indent) {
-  for (int i = 0; i < indent; ++i) {
-    os << "  ";
-  }
-}
-
+static void printStmt(const pecco::Stmt *stmt, raw_ostream &os, int indent);
 static void printExpr(const pecco::Expr *expr, raw_ostream &os) {
   if (!expr) {
     os << "<null>";
     return;
   }
 
-  switch (expr->kind) {
-  case pecco::ExprKind::IntLiteral:
-    os << "IntLiteral("
-       << static_cast<const pecco::IntLiteralExpr *>(expr)->value << ")";
-    break;
-  case pecco::ExprKind::FloatLiteral:
-    os << "FloatLiteral("
-       << static_cast<const pecco::FloatLiteralExpr *>(expr)->value << ")";
-    break;
-  case pecco::ExprKind::StringLiteral:
-    os << "StringLiteral(\""
-       << static_cast<const pecco::StringLiteralExpr *>(expr)->value << "\")";
-    break;
-  case pecco::ExprKind::BoolLiteral:
-    os << "BoolLiteral("
-       << (static_cast<const pecco::BoolLiteralExpr *>(expr)->value ? "true"
-                                                                    : "false")
-       << ")";
-    break;
-  case pecco::ExprKind::Identifier:
-    os << "Identifier("
-       << static_cast<const pecco::IdentifierExpr *>(expr)->name << ")";
-    break;
-  case pecco::ExprKind::Binary: {
-    auto *bin = static_cast<const pecco::BinaryExpr *>(expr);
-    os << "Binary(" << bin->op << ", ";
-    printExpr(bin->left.get(), os);
-    os << ", ";
-    printExpr(bin->right.get(), os);
-    os << ")";
-    break;
-  }
-  case pecco::ExprKind::Unary: {
-    auto *un = static_cast<const pecco::UnaryExpr *>(expr);
-    os << "Unary(" << un->op << ", ";
-    printExpr(un->operand.get(), os);
-    os << ")";
-    break;
-  }
-  case pecco::ExprKind::OperatorSeq: {
-    auto *seq = static_cast<const pecco::OperatorSeqExpr *>(expr);
-    os << "OperatorSeq(";
-    for (size_t i = 0; i < seq->operands.size(); ++i) {
-      if (i > 0) {
-        os << " " << seq->operators[i - 1] << " ";
-      }
-      printExpr(seq->operands[i].get(), os);
-    }
-    os << ")";
-    break;
-  }
-  case pecco::ExprKind::Call: {
-    auto *call = static_cast<const pecco::CallExpr *>(expr);
-    os << "Call(";
-    printExpr(call->callee.get(), os);
-    os << ", [";
-    for (size_t i = 0; i < call->args.size(); ++i) {
-      if (i > 0)
-        os << ", ";
-      printExpr(call->args[i].get(), os);
-    }
-    os << "])";
-    break;
-  }
-  }
+  // Use std::stringstream for C++ stream, then output to LLVM stream
+  std::stringstream ss;
+  expr->print(ss);
+  os << ss.str();
 }
 
-static void printStmt(const pecco::Stmt *stmt, raw_ostream &os, int indent) {
+static void printStmt(const pecco::Stmt *stmt, raw_ostream &os,
+                      int indent = 0) {
   if (!stmt) {
-    printIndent(os, indent);
+    for (int i = 0; i < indent; ++i) {
+      os << "  ";
+    }
     os << "<null>\n";
     return;
   }
 
-  printIndent(os, indent);
-  switch (stmt->kind) {
-  case pecco::StmtKind::Let: {
-    auto *let = static_cast<const pecco::LetStmt *>(stmt);
-    os << "Let(" << let->name;
-    if (let->type) {
-      os << " : " << (*let->type)->name;
-    }
-    os << " = ";
-    printExpr(let->init.get(), os);
-    os << ")\n";
-    break;
-  }
-  case pecco::StmtKind::Func: {
-    auto *func = static_cast<const pecco::FuncStmt *>(stmt);
-    os << "Func(" << func->name << "(";
-    for (size_t i = 0; i < func->params.size(); ++i) {
-      if (i > 0)
-        os << ", ";
-      os << func->params[i].name;
-      if (func->params[i].type) {
-        os << " : " << (*func->params[i].type)->name;
-      }
-    }
-    os << ")";
-    if (func->return_type) {
-      os << " : " << (*func->return_type)->name;
-    }
-    os << ")\n";
-    if (func->body) {
-      printStmt((*func->body).get(), os, indent + 1);
-    }
-    break;
-  }
-  case pecco::StmtKind::OperatorDecl: {
-    auto *op = static_cast<const pecco::OperatorDeclStmt *>(stmt);
-    os << "OperatorDecl(";
-    // Print position
-    switch (op->position) {
-    case pecco::OpPosition::Prefix:
-      os << "prefix ";
-      break;
-    case pecco::OpPosition::Infix:
-      os << "infix ";
-      break;
-    case pecco::OpPosition::Postfix:
-      os << "postfix ";
-      break;
-    }
-    os << op->op << "(";
-    // Print parameters
-    for (size_t i = 0; i < op->params.size(); ++i) {
-      if (i > 0)
-        os << ", ";
-      os << op->params[i].name;
-      if (op->params[i].type) {
-        os << " : " << (*op->params[i].type)->name;
-      }
-    }
-    os << ")";
-    if (op->return_type) {
-      os << " : " << (*op->return_type)->name;
-    }
-    // Print precedence and associativity for infix operators
-    if (op->position == pecco::OpPosition::Infix) {
-      os << " prec " << op->precedence << " assoc ";
-      switch (op->assoc) {
-      case pecco::Associativity::Left:
-        os << "left";
-        break;
-      case pecco::Associativity::Right:
-        os << "right";
-        break;
-      case pecco::Associativity::None:
-        os << "none";
-        break;
-      }
-    }
-    os << ")\n";
-    // Print body if present
-    if (op->body) {
-      printStmt((*op->body).get(), os, indent + 1);
-    }
-    break;
-  }
-  case pecco::StmtKind::If: {
-    auto *ifstmt = static_cast<const pecco::IfStmt *>(stmt);
-    os << "If(";
-    printExpr(ifstmt->condition.get(), os);
-    os << ")\n";
-    printStmt(ifstmt->then_branch.get(), os, indent + 1);
-    if (ifstmt->else_branch) {
-      printIndent(os, indent);
-      os << "Else\n";
-      printStmt((*ifstmt->else_branch).get(), os, indent + 1);
-    }
-    break;
-  }
-  case pecco::StmtKind::Return: {
-    auto *ret = static_cast<const pecco::ReturnStmt *>(stmt);
-    os << "Return(";
-    if (ret->value) {
-      printExpr((*ret->value).get(), os);
-    }
-    os << ")\n";
-    break;
-  }
-  case pecco::StmtKind::While: {
-    auto *wh = static_cast<const pecco::WhileStmt *>(stmt);
-    os << "While(";
-    printExpr(wh->condition.get(), os);
-    os << ")\n";
-    printStmt(wh->body.get(), os, indent + 1);
-    break;
-  }
-  case pecco::StmtKind::Expr: {
-    auto *expr = static_cast<const pecco::ExprStmt *>(stmt);
-    os << "Expr(";
-    printExpr(expr->expr.get(), os);
-    os << ")\n";
-    break;
-  }
-  case pecco::StmtKind::Block: {
-    auto *block = static_cast<const pecco::BlockStmt *>(stmt);
-    os << "Block\n";
-    for (const auto &s : block->stmts) {
-      printStmt(s.get(), os, indent + 1);
-    }
-    break;
-  }
-  }
+  // Use std::stringstream for C++ stream, then output to LLVM stream
+  std::stringstream ss;
+  stmt->print(ss, indent);
+  os << ss.str();
 }
 
 static int runParser(StringRef filename) {
@@ -416,57 +222,44 @@ static void printSymbolTable(const pecco::SymbolTable &symtab,
 
   // Print operators
   WithColor(os, raw_ostream::CYAN, true) << "\nOperators:\n";
-  // Collect unique operator symbols
-  std::set<std::string> op_symbols;
-  const std::string test_ops[] = {"+",  "-",  "*",  "/",  "%",  "**", "&",
-                                  "|",  "^",  "<<", ">>", "&&", "||", "!",
-                                  "==", "!=", "<",  ">",  "<=", ">="};
-  for (const auto &op : test_ops) {
-    auto ops = symtab.find_all_operators(op);
-    if (!ops.empty()) {
-      op_symbols.insert(op);
-    }
-  }
 
-  for (const auto &op : op_symbols) {
-    auto ops = symtab.find_all_operators(op);
-    for (const auto &info : ops) {
-      os << "  ";
-      switch (info.position) {
-      case pecco::OpPosition::Prefix:
-        os << "prefix ";
-        break;
-      case pecco::OpPosition::Infix:
-        os << "infix ";
-        break;
-      case pecco::OpPosition::Postfix:
-        os << "postfix ";
-        break;
-      }
-      os << info.op << "(";
-      for (size_t i = 0; i < info.signature.param_types.size(); ++i) {
-        if (i > 0)
-          os << ", ";
-        os << info.signature.param_types[i];
-      }
-      os << ") : " << info.signature.return_type;
-      if (info.position == pecco::OpPosition::Infix) {
-        os << " [prec " << info.precedence << ", ";
-        switch (info.assoc) {
-        case pecco::Associativity::Left:
-          os << "left";
-          break;
-        case pecco::Associativity::Right:
-          os << "right";
-          break;
-        case pecco::Associativity::None:
-          os << "none";
-          break;
-        }
-        os << "]";
-      }
-      os << "\n";
+  // Get all operators and sort by symbol
+  auto all_ops = symtab.get_all_operators();
+  std::sort(all_ops.begin(), all_ops.end(),
+            [](const pecco::OperatorInfo &a, const pecco::OperatorInfo &b) {
+              if (a.op != b.op)
+                return a.op < b.op;
+              return a.position < b.position;
+            });
+
+  for (const auto &info : all_ops) {
+    os << "  ";
+    switch (info.position) {
+    case pecco::OpPosition::Prefix:
+      os << "prefix ";
+      break;
+    case pecco::OpPosition::Infix:
+      os << "infix ";
+      break;
+    case pecco::OpPosition::Postfix:
+      os << "postfix ";
+      break;
     }
+    os << info.op << "(";
+    for (size_t i = 0; i < info.signature.param_types.size(); ++i) {
+      if (i > 0)
+        os << ", ";
+      os << info.signature.param_types[i];
+    }
+    os << ") : " << info.signature.return_type;
+    if (info.position == pecco::OpPosition::Infix) {
+      os << " [prec " << info.precedence;
+      if (info.assoc == pecco::Associativity::Right) {
+        os << ", assoc_right";
+      }
+      os << "]";
+    }
+    os << "\n";
   }
 }
 
@@ -518,13 +311,15 @@ static int runCompile(StringRef filename) {
   }
 
   // Semantic analysis
-  pecco::SemanticAnalyzer analyzer;
+  // Step 1: Build symbol table
+  pecco::SymbolTable symbol_table;
+  pecco::DeclarationCollector collector;
 
   // Load prelude
-  if (!analyzer.load_prelude(STDLIB_DIR "/prelude.pl")) {
+  if (!collector.load_prelude(STDLIB_DIR "/prelude.pec", symbol_table)) {
     WithColor::error(errs(), "plc") << "failed to load prelude\n";
-    if (analyzer.has_errors()) {
-      for (const auto &err : analyzer.errors()) {
+    if (collector.has_errors()) {
+      for (const auto &err : collector.errors()) {
         errs() << "  " << err.message << "\n";
       }
     }
@@ -532,10 +327,8 @@ static int runCompile(StringRef filename) {
   }
 
   // Collect declarations from user code
-  analyzer.collect_declarations(stmts);
-
-  if (analyzer.has_errors()) {
-    for (const auto &err : analyzer.errors()) {
+  if (!collector.collect(stmts, symbol_table)) {
+    for (const auto &err : collector.errors()) {
       WithColor::error(errs(), "plc")
           << "semantic error at " << filename << ":" << err.line << ":"
           << err.column << ": " << err.message << "\n";
@@ -543,9 +336,41 @@ static int runCompile(StringRef filename) {
     return 1;
   }
 
-  // Resolve operator sequences in all statements
+  // Step 2: Resolve operator sequences
+  std::vector<std::string> resolve_errors;
   for (auto &stmt : stmts) {
-    resolveStmtOperators(stmt.get(), analyzer);
+    pecco::OperatorResolver::resolve_stmt(stmt.get(), symbol_table,
+                                          resolve_errors);
+  }
+
+  // Check for errors after resolution
+  if (!resolve_errors.empty()) {
+    for (const auto &err : resolve_errors) {
+      // Parse error format: "at line:col: message"
+      if (err.find("at ") == 0) {
+        size_t pos = err.find(": ");
+        if (pos != std::string::npos) {
+          std::string location = err.substr(3, pos - 3);
+          std::string message = err.substr(pos + 2);
+
+          // Parse line:col
+          size_t colon = location.find(':');
+          if (colon != std::string::npos) {
+            size_t line = std::stoul(location.substr(0, colon));
+            size_t column = std::stoul(location.substr(colon + 1));
+
+            WithColor::error(errs(), "plc")
+                << "semantic error at " << filename << ":" << line << ":"
+                << column << ": " << message << "\n";
+            printSourceLine(sourceContent, line, column, 0, 0, errs());
+            continue;
+          }
+        }
+      }
+      // Fallback: print error as is
+      WithColor::error(errs(), "plc") << "semantic error: " << err << "\n";
+    }
+    return 1;
   }
 
   // Output based on flags
@@ -557,7 +382,7 @@ static int runCompile(StringRef filename) {
   }
 
   if (DumpSymbols) {
-    printSymbolTable(analyzer.symbol_table(), outs());
+    printSymbolTable(symbol_table, outs());
   }
 
   if (!DumpAST && !DumpSymbols) {
@@ -567,65 +392,6 @@ static int runCompile(StringRef filename) {
   }
 
   return 0;
-}
-
-static void resolveStmtOperators(pecco::Stmt *stmt,
-                                 pecco::SemanticAnalyzer &analyzer) {
-  if (!stmt)
-    return;
-
-  switch (stmt->kind) {
-  case pecco::StmtKind::Let: {
-    auto *let = static_cast<pecco::LetStmt *>(stmt);
-    let->init = analyzer.resolve_operators(std::move(let->init));
-    break;
-  }
-  case pecco::StmtKind::Func: {
-    auto *func = static_cast<pecco::FuncStmt *>(stmt);
-    if (func->body) {
-      resolveStmtOperators((*func->body).get(), analyzer);
-    }
-    break;
-  }
-  case pecco::StmtKind::If: {
-    auto *ifstmt = static_cast<pecco::IfStmt *>(stmt);
-    ifstmt->condition =
-        analyzer.resolve_operators(std::move(ifstmt->condition));
-    resolveStmtOperators(ifstmt->then_branch.get(), analyzer);
-    if (ifstmt->else_branch) {
-      resolveStmtOperators((*ifstmt->else_branch).get(), analyzer);
-    }
-    break;
-  }
-  case pecco::StmtKind::Return: {
-    auto *ret = static_cast<pecco::ReturnStmt *>(stmt);
-    if (ret->value) {
-      *ret->value = analyzer.resolve_operators(std::move(*ret->value));
-    }
-    break;
-  }
-  case pecco::StmtKind::While: {
-    auto *wh = static_cast<pecco::WhileStmt *>(stmt);
-    wh->condition = analyzer.resolve_operators(std::move(wh->condition));
-    resolveStmtOperators(wh->body.get(), analyzer);
-    break;
-  }
-  case pecco::StmtKind::Expr: {
-    auto *expr = static_cast<pecco::ExprStmt *>(stmt);
-    expr->expr = analyzer.resolve_operators(std::move(expr->expr));
-    break;
-  }
-  case pecco::StmtKind::Block: {
-    auto *block = static_cast<pecco::BlockStmt *>(stmt);
-    for (auto &s : block->stmts) {
-      resolveStmtOperators(s.get(), analyzer);
-    }
-    break;
-  }
-  case pecco::StmtKind::OperatorDecl:
-    // Operator declarations don't have expressions to resolve
-    break;
-  }
 }
 
 int main(int argc, char **argv) {

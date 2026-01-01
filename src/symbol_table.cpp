@@ -52,10 +52,12 @@ std::vector<std::string> SymbolTable::get_all_function_names() const {
 }
 
 std::vector<OperatorInfo> SymbolTable::get_all_operators() const {
-  return operators_.find_all_operators(""); // This won't work correctly
-  // We need to modify OperatorTable to support getting all operators
   std::vector<OperatorInfo> result;
-  // For now, return empty - we'll fix this if needed
+  for (const auto &[key, overloads] : operators_.get_operators()) {
+    for (const auto &op : overloads) {
+      result.push_back(op);
+    }
+  }
   return result;
 }
 

@@ -56,11 +56,18 @@ private:
                     const std::string &message);
   bool expect_keyword(const std::string &keyword, const std::string &message);
   bool at_end() const;
+  bool
+  can_start_primary() const; // Check if current token can start a primary expr
 
   void error(const std::string &message);
   void error_at_previous_end(
       const std::string &message); // Error after previous token
   void synchronize();
+
+  // Convert token to source location
+  SourceLocation token_loc(const Token &tok) const {
+    return SourceLocation(tok.line, tok.column, tok.end_column);
+  }
 
   std::vector<Token> tokens_;
   std::size_t current_;

@@ -15,7 +15,7 @@ plc <input-file> [options]
 ### 命令行选项
 
 - **位置参数**：
-  - `<input-file>`：要处理的源文件路径（`.pl` 文件）
+  - `<input-file>`：要处理的源文件路径（`.pec` 文件）
   - **必需**：必须提供输入文件
 
 - **模式选项**：
@@ -38,28 +38,27 @@ plc <input-file> [options]
 不指定任何模式选项时，执行完整的语义分析：
 
 ```bash
-$ plc sample.pl
+$ plc sample.pec
 Compilation successful (semantic analysis complete)
 ```
 
 **处理流程**：
 1. 词法分析：源代码 → token 流
 2. 语法分析：token 流 → 平面 AST
-3. 加载标准库：`stdlib/prelude.pl`
-4. 收集声明：构建符号表
-5. 运算符解析：平面表达式 → 树状结构
-6. 报告成功或错误
+3. 声明收集：加载标准库并收集用户声明，构建符号表
+4. 操作符解析：将平面 `OperatorSeq` 转换为树状 `Binary`/`Unary` 节点
+5. 报告成功或错误
 
 **配合输出选项**：
 
 ```bash
 # 输出解析后的 AST
-$ plc sample.pl --dump-ast
+$ plc sample.pec --dump-ast
 Resolved AST:
 Let(x = Binary(+, IntLiteral(1), Binary(*, IntLiteral(2), IntLiteral(3))))
 
 # 输出符号表
-$ plc sample.pl --dump-symbols
+$ plc sample.pec --dump-symbols
 
 Symbol Table:
 
@@ -73,7 +72,7 @@ Operators:
   ...
 
 # 同时输出 AST 和符号表
-$ plc sample.pl --dump-ast --dump-symbols
+$ plc sample.pec --dump-ast --dump-symbols
 ```
 
 ### 词法分析模式 (`--lex`)
@@ -81,7 +80,7 @@ $ plc sample.pl --dump-ast --dump-symbols
 输出所有 token 的详细信息：
 
 ```bash
-$ plc sample.pl --lex
+$ plc sample.pec --lex
 [Keyword] 'let' (line 1, col 1)
 [Identifier] 'x' (line 1, col 5)
 [Operator] '=' (line 1, col 7)
@@ -102,7 +101,7 @@ $ plc sample.pl --lex
 输出语法分析后 AST 的文本表示：
 
 ```bash
-$ plc sample.pl --parse
+$ plc sample.pec --parse
 AST:
 Let(x = IntLiteral(42))
 Let(result = OperatorSeq(IntLiteral(1) + IntLiteral(2) * IntLiteral(3)))
@@ -131,7 +130,7 @@ Func(add : i32
 输出语义分析后的 AST：
 
 ```bash
-$ plc sample.pl --dump-ast
+$ plc sample.pec --dump-ast
 Resolved AST:
 Let(x = IntLiteral(42))
 Let(result = Binary(+, IntLiteral(1), Binary(*, IntLiteral(2), IntLiteral(3))))
@@ -195,8 +194,8 @@ plc: error: <错误类型> at <文件名>:<行号>:<列号>: <错误消息>
 #### 词法错误：无效转义序列
 
 ```bash
-$ plc test.pl --lex
-plc: error: lexer error at test.pl:1:11: Invalid string escape
+$ plc test.pec --lex
+plc: error: lexer error at test.pec:1:11: Invalid string escape
   1 | let str = "bad\qescape";
     |           ~~~~^~~~~~~~~
 ```
@@ -204,8 +203,8 @@ plc: error: lexer error at test.pl:1:11: Invalid string escape
 #### 语法错误：缺少分号
 
 ```bash
-$ plc test.pl --parse
-plc: error: parse error at test.pl:1:11: Expected ';' after let statement
+$ plc test.pec --parse
+plc: error: parse error at test.pec:1:11: Expected ';' after let statement
   1 | let x = 42
     |           ^
 ```
@@ -213,29 +212,31 @@ plc: error: parse error at test.pl:1:11: Expected ';' after let statement
 #### 语法错误：错误恢复示例
 
 ```bash
-$ plc test.pl --parse
-plc: error: parse error at test.pl:2:11: Expected ';' after let statement
+$ plc test.pec --parse
+plc: error: parse error at test.pec:2:11: Expected ';' after let statement
   2 | let x = 42
     |           ^
-plc: error: parse error at test.pl:4:17: Expected ';' after return statement
+plc: error: parse error at test.pec:4:17: Expected ';' after return statement
   4 |     return a + b
     |                 ^
 ```
 
 注意：即使第一个语句有错误，parser 也会继续解析后续代码。
 
-#### 语义错误：找不到运算符
+#### 语义错误：混合结合性
 
 ```bash
-$ plc test.pl --dump-ast
-plc: semantic error at test.pl:2:10: No matching operator found for '++' with position prefix
-  2 | let x = ++y;
-    |          ^
+$ plc test.pec
+plc: error: semantic error at test.pec:5:18: Mixed associativity at same precedence level
+  5 |   let x = 1 +< 2 +> 3;
+    |                  ^
 ```
+
+错误精确指向冲突的操作符位置。
 
 ## 标准库
 
-编译器会自动加载标准库 `stdlib/prelude.pl`，其中包含：
+编译器会自动加载标准库 `stdlib/prelude.pec`，其中包含：
 
 ### 内置函数
 
@@ -266,7 +267,7 @@ plc: semantic error at test.pl:2:10: No matching operator found for '++' with po
 
 ## 文件要求
 
-- **扩展名**：`.pl`（pecco language）
+- **扩展名**：`.pec`
 - **编码**：UTF-8（推荐）或 ASCII
 - **行尾**：支持 Unix（LF）和 Windows（CRLF）
 
@@ -282,45 +283,20 @@ plc: semantic error at test.pl:2:10: No matching operator found for '++' with po
 
 ```bash
 # 词法分析
-plc sample.pl --lex
+plc sample.pec --lex
 
 # 语法分析
-plc sample.pl --parse
+plc sample.pec --parse
 
 # 默认编译（语义分析）
-plc sample.pl
+plc sample.pec
 
 # 输出解析后的树状 AST
-plc sample.pl --dump-ast
+plc sample.pec --dump-ast
 
 # 输出符号表
-plc sample.pl --dump-symbols
+plc sample.pec --dump-symbols
 
 # 同时输出 AST 和符号表
-plc sample.pl --dump-ast --dump-symbols
-```
-
-### 开发调试
-
-```bash
-# 比较平面 AST 和树状 AST
-plc test.pl --parse > parse.txt
-plc test.pl --dump-ast > semantic.txt
-diff -u parse.txt semantic.txt
-
-# 检查运算符优先级是否正确
-echo "let x = 1 + 2 * 3;" | plc /dev/stdin --dump-ast
-
-# 检查符号表中的运算符定义
-plc sample.pl --dump-symbols | grep "infix +"
-```
-
-### 管道使用
-
-```bash
-# 从标准输入读取
-echo "let x = 42;" | plc /dev/stdin --lex
-
-# 重定向到文件
-plc sample.pl --parse > ast.txt 2> errors.txt
+plc sample.pec --dump-ast --dump-symbols
 ```

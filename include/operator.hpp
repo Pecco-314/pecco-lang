@@ -14,11 +14,10 @@ enum class OpPosition {
   Postfix, // x++
 };
 
-// Operator associativity
+// Operator associativity (only for infix operators)
 enum class Associativity {
-  Left,  // Left-associative
-  Right, // Right-associative
-  None,  // Non-associative (e.g., comparison operators)
+  Left,  // Left-associative: a + b + c = (a + b) + c
+  Right, // Right-associative: a = b = c means a = (b = c)
 };
 
 // Type information for operator signature
@@ -32,18 +31,65 @@ struct OperatorSignature {
         return_type(std::move(return_type)) {}
 };
 
-// Operator information
+// Prefix operator information (no precedence/associativity needed)
+struct PrefixOperatorInfo {
+  std::string op;              // Operator symbol
+  OperatorSignature signature; // Type signature
+
+  PrefixOperatorInfo(std::string op, OperatorSignature signature)
+      : op(std::move(op)), signature(std::move(signature)) {}
+};
+
+// Postfix operator information (no precedence/associativity needed)
+struct PostfixOperatorInfo {
+  std::string op;              // Operator symbol
+  OperatorSignature signature; // Type signature
+
+  PostfixOperatorInfo(std::string op, OperatorSignature signature)
+      : op(std::move(op)), signature(std::move(signature)) {}
+};
+
+// Infix operator information (with precedence and associativity)
+struct InfixOperatorInfo {
+  std::string op;              // Operator symbol
+  int precedence;              // Higher number = higher precedence (0-100)
+  Associativity assoc;         // Associativity
+  OperatorSignature signature; // Type signature
+
+  InfixOperatorInfo(std::string op, int precedence, Associativity assoc,
+                    OperatorSignature signature)
+      : op(std::move(op)), precedence(precedence), assoc(assoc),
+        signature(std::move(signature)) {}
+};
+
+// Unified operator info (for generic access)
 struct OperatorInfo {
   std::string op;              // Operator symbol
   OpPosition position;         // Prefix/Infix/Postfix
-  int precedence;              // Higher number = higher precedence (0-100)
-  Associativity assoc;         // Associativity
+  int precedence;              // Only valid for infix (0 for prefix/postfix)
+  Associativity assoc;         // Only valid for infix
   OperatorSignature signature; // Type signature
 
   OperatorInfo(std::string op, OpPosition position, int precedence,
                Associativity assoc, OperatorSignature signature)
       : op(std::move(op)), position(position), precedence(precedence),
         assoc(assoc), signature(std::move(signature)) {}
+
+  // Convenience constructors
+  static OperatorInfo from_prefix(const PrefixOperatorInfo &info) {
+    return OperatorInfo(info.op, OpPosition::Prefix, 0, Associativity::Left,
+                        info.signature);
+  }
+
+  static OperatorInfo from_postfix(const PostfixOperatorInfo &info) {
+    return OperatorInfo(info.op, OpPosition::Postfix, 0, Associativity::Left,
+                        info.signature);
+  }
+
+  static OperatorInfo from_infix(const InfixOperatorInfo &info) {
+    return OperatorInfo(info.op, OpPosition::Infix, info.precedence, info.assoc,
+                        info.signature);
+  }
 };
 
 // Operator table for symbol resolution
